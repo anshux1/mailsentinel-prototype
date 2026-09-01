@@ -7,11 +7,12 @@ export type AuthConfig = {
 	secret: string;
 	baseUrl: string;
 	allowSignUp?: boolean;
+	database?: ReturnType<typeof createDb>;
 };
 
 /** Creates the installed Better Auth version against its reviewed Drizzle schema. */
 export function createAuth(config: AuthConfig) {
-	const db = createDb(config.databaseUrl);
+	const db = config.database ?? createDb(config.databaseUrl);
 	return betterAuth({
 		appName: "MailSentinel",
 		baseURL: config.baseUrl,
