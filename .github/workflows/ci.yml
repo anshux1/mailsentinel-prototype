@@ -1,0 +1,29 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [integration, main]
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env: {POSTGRES_PASSWORD: mailsentinel, POSTGRES_USER: mailsentinel, POSTGRES_DB: mailsentinel}
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mailsentinel -d mailsentinel"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: {version: 9}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: pnpm}
+      - uses: astral-sh/setup-uv@v5
+        with: {version: "0.6.14", enable-cache: true}
+      - run: pnpm install --frozen-lockfile
+      - run: uv sync --locked
+        working-directory: apps/analyzer
+      - run: pnpm lint && pnpm typecheck && pnpm test
+      - run: pnpm build
