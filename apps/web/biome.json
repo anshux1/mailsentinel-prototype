@@ -1,6 +1,9 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.3.8/schema.json",
 	"root": false,
+	"files": {
+		"includes": ["**", "!.next", "!test-results", "!playwright-report"]
+	},
 	"extends": [
 		"@mailsentinel/biome-config/base",
 		"@mailsentinel/biome-config/next-js"
