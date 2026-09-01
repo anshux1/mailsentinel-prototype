@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from app.contracts.models import AnalysisIntakeAccepted, AnalysisIntakeRequest
 from app.core.settings import get_settings
+from app.tasks.broker import setup_analysis
 
 app = FastAPI(title="MailSentinel Analyzer", version="prototype-1")
 
@@ -72,5 +73,5 @@ def ready() -> dict[str, str]:
     dependencies=[Depends(require_internal_token)],
 )
 def intake(payload: AnalysisIntakeRequest) -> AnalysisIntakeAccepted:
-    # Queue integration is deliberately deferred; setup never invents a verdict.
+    setup_analysis.send(payload.analysis_run_id)
     return AnalysisIntakeAccepted(analysis_run_id=payload.analysis_run_id)

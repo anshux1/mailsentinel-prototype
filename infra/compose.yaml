@@ -70,7 +70,7 @@ services:
       retries: 10
   worker:
     build: ../apps/analyzer
-    command: ["uv", "run", "dramatiq", "app.tasks"]
+    command: ["uv", "run", "dramatiq", "app.tasks.broker"]
     environment: *analyzer-environment
     depends_on:
       redis: {condition: service_healthy}
