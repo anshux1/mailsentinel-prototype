@@ -1,31 +1,63 @@
 from functools import lru_cache
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Self
 
-from pydantic import SecretStr, field_validator
+from pydantic import AnyHttpUrl, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
     app_env: Literal["test", "development", "demo", "production"] = "development"
-    database_url: str = "postgresql://mailsentinel:mailsentinel@localhost:5432/mailsentinel"
-    redis_url: str = "redis://localhost:6379/0"
-    s3_endpoint: str = "http://localhost:9000"
+    database_url: PostgresDsn
+    redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
+    s3_endpoint: AnyHttpUrl = AnyHttpUrl("http://localhost:9000")
+    s3_region: str = "us-east-1"
     s3_bucket: str = "mailsentinel-evidence"
-    analyzer_service_token: SecretStr = SecretStr("local-development-token-change-me")
+    s3_access_key_id: str
+    s3_secret_access_key: SecretStr
+    s3_force_path_style: bool = True
+    analyzer_service_token: SecretStr
     max_eml_bytes: int = 26_214_400
+    max_mime_parts: int = 200
+    max_header_count: int = 1_000
+    max_urls: int = 500
+    max_attachment_bytes: int = 10_485_760
+    maxmind_db_path: Path | None = None
+    abuseipdb_api_key: SecretStr | None = None
     enrichment_mode: Literal["fixture", "offline", "live"] = "fixture"
     analysis_version: str = "prototype-1"
+    retention_days: int = 90
 
-    @field_validator("max_eml_bytes")
+    @field_validator(
+        "max_eml_bytes",
+        "max_mime_parts",
+        "max_header_count",
+        "max_urls",
+        "max_attachment_bytes",
+        "retention_days",
+    )
     @classmethod
     def positive_limit(cls, value: int) -> int:
         if value <= 0:
-            raise ValueError("max_eml_bytes must be positive")
+            raise ValueError("resource limits must be positive")
         return value
+
+    @field_validator("analyzer_service_token", "s3_secret_access_key")
+    @classmethod
+    def minimum_secret_length(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value()) < 16:
+            raise ValueError("secret must contain at least 16 characters")
+        return value
+
+    @model_validator(mode="after")
+    def require_live_provider_configuration(self) -> Self:
+        if self.enrichment_mode == "live" and not self.abuseipdb_api_key:
+            raise ValueError("ABUSEIPDB_API_KEY is required when ENRICHMENT_MODE=live")
+        return self
 
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings()  # type: ignore[call-arg]

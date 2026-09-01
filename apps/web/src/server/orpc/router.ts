@@ -26,10 +26,6 @@ const deferred = z.object({
 });
 
 function databaseUrl(): string {
-	if (!env.DATABASE_URL)
-		throw new ORPCError("INTERNAL_SERVER_ERROR", {
-			message: "Database is not configured",
-		});
 	return env.DATABASE_URL;
 }
 

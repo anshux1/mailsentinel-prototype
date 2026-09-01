@@ -1,6 +1,9 @@
 import secrets
 from uuid import uuid4
 
+import boto3
+import psycopg
+import redis
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
@@ -41,6 +44,24 @@ def live() -> dict[str, bool]:
 
 @app.get("/health/ready")
 def ready() -> dict[str, str]:
+    settings = get_settings()
+    try:
+        with psycopg.connect(str(settings.database_url), connect_timeout=2) as connection:
+            connection.execute("select 1")
+        redis.from_url(str(settings.redis_url), socket_connect_timeout=2).ping()  # type: ignore[no-untyped-call]
+        storage = boto3.client(
+            "s3",
+            endpoint_url=str(settings.s3_endpoint),
+            region_name=settings.s3_region,
+            aws_access_key_id=settings.s3_access_key_id,
+            aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
+        )
+        storage.head_bucket(Bucket=settings.s3_bucket)
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="dependencies unavailable",
+        ) from error
     return {"status": "ready"}
 
 

@@ -13,7 +13,7 @@ export type RpcContext = {
 
 export async function createRpcContext(request: Request): Promise<RpcContext> {
 	const session = await auth.api.getSession({ headers: request.headers });
-	if (!session || !env.DATABASE_URL) {
+	if (!session) {
 		return {
 			requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(),
 			userId: null,
