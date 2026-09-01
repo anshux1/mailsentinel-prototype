@@ -48,7 +48,7 @@ jobs:
       - run: pnpm --filter @mailsentinel/web test:e2e
       - run: pnpm audit --audit-level high
       - run: docker build -t mailsentinel-analyzer:ci apps/analyzer
-      - uses: aquasecurity/trivy-action@0.33.1
+      - uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: mailsentinel-analyzer:ci
           severity: CRITICAL,HIGH
