@@ -1,5 +1,4 @@
-import * as schema from "@mailsentinel/db";
-import { createDb } from "@mailsentinel/db";
+import { account, createDb, session, user, verification } from "@mailsentinel/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
@@ -17,7 +16,7 @@ export function createAuth(config: AuthConfig) {
 		appName: "MailSentinel",
 		baseURL: config.baseUrl,
 		secret: config.secret,
-		database: drizzleAdapter(db, { provider: "pg", schema }),
+		database: drizzleAdapter(db, { provider: "pg" }),
 		emailAndPassword: {
 			enabled: true,
 			disableSignUp: !config.allowSignUp,
