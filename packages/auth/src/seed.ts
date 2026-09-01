@@ -27,6 +27,7 @@ await db
 		id: "account_demo_credential",
 		accountId: userId,
 		providerId: "credential",
+		issuer: "local:credential",
 		userId,
 		password: passwordHash,
 	})

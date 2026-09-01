@@ -1,4 +1,4 @@
-import { account, createDb, session, user, verification } from "@mailsentinel/db";
+import { createDb } from "@mailsentinel/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 

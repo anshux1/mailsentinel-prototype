@@ -1,5 +1,5 @@
 {
-	"id": "e0511931-eb3a-4107-ba50-fd2111c6be3e",
+	"id": "f325084f-06c0-4798-858e-ffe27a796b7e",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"version": "7",
 	"dialect": "postgresql",
@@ -25,6 +25,12 @@
 					"type": "text",
 					"primaryKey": false,
 					"notNull": true
+				},
+				"issuer": {
+					"name": "issuer",
+					"type": "text",
+					"primaryKey": false,
+					"notNull": false
 				},
 				"user_id": {
 					"name": "user_id",
