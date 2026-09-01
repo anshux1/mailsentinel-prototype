@@ -45,9 +45,10 @@ def test_missing_core_secret(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings(_env_file=None, **values)  # type: ignore[call-arg]
 
 
-def test_live_mode_requires_provider_key() -> None:
+@pytest.mark.parametrize("api_key", [None, ""])
+def test_live_mode_requires_provider_key(api_key: str | None) -> None:
     with pytest.raises(ValidationError, match="ABUSEIPDB_API_KEY"):
-        settings(enrichment_mode="live")
+        settings(enrichment_mode="live", abuseipdb_api_key=api_key)
 
 
 def test_example_documents_every_setting() -> None:

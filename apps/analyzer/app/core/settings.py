@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import AnyHttpUrl, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
+from pydantic import AnyHttpUrl, Field, PostgresDsn, RedisDsn, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,9 +13,9 @@ class Settings(BaseSettings):
     database_url: PostgresDsn
     redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
     s3_endpoint: AnyHttpUrl = AnyHttpUrl("http://localhost:9000")
-    s3_region: str = "us-east-1"
-    s3_bucket: str = "mailsentinel-evidence"
-    s3_access_key_id: str
+    s3_region: str = Field(default="us-east-1", min_length=1)
+    s3_bucket: str = Field(default="mailsentinel-evidence", min_length=1)
+    s3_access_key_id: str = Field(min_length=1)
     s3_secret_access_key: SecretStr
     s3_force_path_style: bool = True
     analyzer_service_token: SecretStr
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     maxmind_db_path: Path | None = None
     abuseipdb_api_key: SecretStr | None = None
     enrichment_mode: Literal["fixture", "offline", "live"] = "fixture"
-    analysis_version: str = "prototype-1"
+    analysis_version: str = Field(default="prototype-1", min_length=1)
     retention_days: int = 90
 
     @field_validator(
@@ -53,7 +53,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def require_live_provider_configuration(self) -> Self:
-        if self.enrichment_mode == "live" and not self.abuseipdb_api_key:
+        if self.enrichment_mode == "live" and (
+            self.abuseipdb_api_key is None or not self.abuseipdb_api_key.get_secret_value()
+        ):
             raise ValueError("ABUSEIPDB_API_KEY is required when ENRICHMENT_MODE=live")
         return self
 
