@@ -9,7 +9,14 @@ export const env = createEnv({
 		ANALYZER_INTERNAL_URL: z.string().url().default("http://localhost:8000"),
 		ANALYZER_SERVICE_TOKEN: z.string().min(16).optional(),
 		S3_ENDPOINT: z.string().url().default("http://localhost:9000"),
+		S3_REGION: z.string().min(1).default("us-east-1"),
 		S3_BUCKET: z.string().min(1).default("mailsentinel-evidence"),
+		S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+		S3_SECRET_ACCESS_KEY: z.string().min(8).optional(),
+		S3_FORCE_PATH_STYLE: z
+			.enum(["true", "false"])
+			.default("true")
+			.transform((value) => value === "true"),
 		MAX_EML_BYTES: z.coerce.number().int().positive().default(26214400),
 		APP_ENV: z
 			.enum(["development", "test", "demo", "production"])
@@ -24,7 +31,11 @@ export const env = createEnv({
 		ANALYZER_INTERNAL_URL: process.env.ANALYZER_INTERNAL_URL,
 		ANALYZER_SERVICE_TOKEN: process.env.ANALYZER_SERVICE_TOKEN,
 		S3_ENDPOINT: process.env.S3_ENDPOINT,
+		S3_REGION: process.env.S3_REGION,
 		S3_BUCKET: process.env.S3_BUCKET,
+		S3_ACCESS_KEY_ID: process.env.S3_ACCESS_KEY_ID,
+		S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
+		S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE,
 		MAX_EML_BYTES: process.env.MAX_EML_BYTES,
 		APP_ENV: process.env.APP_ENV,
 		WEB_DATA_MODE: process.env.WEB_DATA_MODE,

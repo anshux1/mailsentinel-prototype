@@ -7,7 +7,9 @@
 		"lint": "biome check ."
 	},
 	"dependencies": {
-		"better-auth": "^1.2.7"
+		"@mailsentinel/db": "workspace:^",
+		"better-auth": "^1.2.7",
+		"drizzle-orm": "^0.45.2"
 	},
 	"devDependencies": {
 		"@mailsentinel/typescript-config": "workspace:*",

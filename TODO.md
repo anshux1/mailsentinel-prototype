@@ -8,9 +8,9 @@ Track each setup unit in commit order. A checked item means its implementation a
 - [x] Better Auth package boundary and Drizzle database foundation
 - [x] FastAPI/Pydantic settings, protected intake, OpenAPI export, Dramatiq/Redis actor
 - [x] PostgreSQL, Redis, MinIO Compose services and health checks
-- [ ] S3 server-only client and private evidence metadata adapter
+- [x] S3 server-only client and private evidence metadata adapter
 - [ ] Full Better Auth PostgreSQL adapter, demo session, sign-in/sign-out
-- [ ] Tenant-scoped repositories and cross-tenant test
+- [x] Tenant-scoped repositories and cross-tenant test
 - [ ] Complete typed oRPC procedures: health, case shell, analysis status, report placeholder
 - [x] Internal analyzer contract models and deterministic generated contract artifact
 - [ ] Contract valid/invalid examples and CI drift gate
