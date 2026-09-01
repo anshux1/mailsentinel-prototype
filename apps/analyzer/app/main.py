@@ -1,25 +1,46 @@
 import secrets
+from typing import Annotated, Any
 from uuid import uuid4
 
 import boto3
 import psycopg
 import redis
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from botocore.config import Config
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.contracts.models import AnalysisIntakeAccepted, AnalysisIntakeRequest
-from app.core.settings import get_settings
+from app.core.settings import Settings, get_settings
 from app.tasks.broker import setup_analysis
 
 app = FastAPI(title="MailSentinel Analyzer", version="prototype-1")
+internal_bearer = HTTPBearer(auto_error=False)
 
 
-def require_internal_token(authorization: str | None = Header(default=None)) -> None:
+def require_internal_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(internal_bearer)],
+) -> None:
     settings = get_settings()
     expected = settings.analyzer_service_token.get_secret_value()
-    supplied = authorization.removeprefix("Bearer ") if authorization else ""
+    supplied = credentials.credentials if credentials and credentials.scheme.lower() == "bearer" else ""
     if not secrets.compare_digest(supplied, expected):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid internal token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid internal token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def create_storage_client(settings: Settings) -> Any:
+    return boto3.client(
+        "s3",
+        endpoint_url=str(settings.s3_endpoint),
+        region_name=settings.s3_region,
+        aws_access_key_id=settings.s3_access_key_id,
+        aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
+        config=Config(s3={"addressing_style": "path" if settings.s3_force_path_style else "auto"}),
+    )
 
 
 @app.middleware("http")
@@ -50,14 +71,7 @@ def ready() -> dict[str, str]:
         with psycopg.connect(str(settings.database_url), connect_timeout=2) as connection:
             connection.execute("select 1")
         redis.from_url(str(settings.redis_url), socket_connect_timeout=2).ping()  # type: ignore[no-untyped-call]
-        storage = boto3.client(
-            "s3",
-            endpoint_url=str(settings.s3_endpoint),
-            region_name=settings.s3_region,
-            aws_access_key_id=settings.s3_access_key_id,
-            aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
-        )
-        storage.head_bucket(Bucket=settings.s3_bucket)
+        create_storage_client(settings).head_bucket(Bucket=settings.s3_bucket)
     except Exception as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

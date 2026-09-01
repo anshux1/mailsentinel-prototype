@@ -17,8 +17,10 @@ class AnalysisStatusValue(StrEnum):
 
 
 class Artifact(ContractModel):
-    object_key: str = Field(pattern=r"^organizations/[^/]+/cases/[^/]+/artifacts/.+")
-    sha256: str = Field(min_length=64, max_length=64)
+    object_key: str = Field(
+        pattern=r"^organizations/[A-Za-z0-9_-]+/cases/[A-Za-z0-9_-]+/artifacts/[A-Za-z0-9_-]+\.eml$"
+    )
+    sha256: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
     byte_size: int = Field(gt=0)
 
 

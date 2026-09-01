@@ -182,9 +182,7 @@ export interface operations {
     intake_v1_analyses_post: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
