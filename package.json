@@ -12,7 +12,11 @@
 		"db:migrate": "pnpm --filter @mailsentinel/db db:migrate",
 		"db:seed": "pnpm --filter @mailsentinel/auth db:seed",
 		"contracts:generate": "pnpm --filter @mailsentinel/analyzer contracts:export && pnpm --filter @mailsentinel/contracts generate",
-		"contracts:check": "pnpm contracts:generate && git diff --exit-code -- packages/contracts/generated"
+		"contracts:check": "pnpm contracts:generate && git diff --exit-code -- packages/contracts/generated",
+		"infra:start": "./infra/scripts/start.sh",
+		"infra:wait": "./infra/scripts/wait.sh",
+		"infra:reset": "./infra/scripts/reset.sh",
+		"infra:stop": "./infra/scripts/stop.sh"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.8",

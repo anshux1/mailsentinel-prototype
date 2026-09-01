@@ -12,8 +12,7 @@ Node 22, pnpm 9, Python 3.12, uv, and Docker Compose. Copy the relevant `.env.ex
 pnpm install --frozen-lockfile
 uv sync --locked
 cd apps/analyzer && uv sync --locked && cd ../..
-docker compose -f infra/compose.yaml up -d
-pnpm db:migrate && pnpm db:seed
+pnpm infra:start           # Compose health, migrations, private bucket, seed
 pnpm dev                 # web: 3000; analyzer is internal
 pnpm lint && pnpm typecheck && pnpm test && pnpm build
 ```

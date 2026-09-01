@@ -14,7 +14,7 @@ Track each setup unit in commit order. A checked item means its implementation a
 - [x] Complete typed oRPC procedures: health, case shell, analysis status, report placeholder
 - [x] Internal analyzer contract models and deterministic generated contract artifact
 - [x] Contract valid/invalid examples and CI drift gate
-- [ ] Infrastructure startup/readiness/reset scripts and runbook
+- [x] Infrastructure startup/readiness/reset scripts and runbook
 - [x] Root/web/analyzer environment validation tests and secret naming checks
 - [x] Vitest, pytest, Ruff, and mypy baseline configuration (ESLint/Playwright remain)
 - [x] GitHub Actions install, quality, and build jobs (migration/contracts/scans remain)
