@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { SessionControl } from "@/components/session-control";
 
 async function getHealth() {
 	const response = await fetch("/api/rpc/system/health");
@@ -27,9 +28,7 @@ export default function Home() {
 						</div>
 						<span className="font-semibold tracking-tight">MailSentinel</span>
 					</div>
-					<span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400">
-						Prototype foundation
-					</span>
+					<SessionControl />
 				</nav>
 				<section className="grid flex-1 items-center gap-14 py-20 lg:grid-cols-[1.1fr_.9fr]">
 					<div>
@@ -45,12 +44,12 @@ export default function Home() {
 							transparent analysis.
 						</p>
 						<div className="mt-10 flex flex-wrap gap-3">
-							<button
-								type="button"
+							<a
+								href="/sign-in"
 								className="rounded-xl bg-cyan-300 px-5 py-3 font-semibold text-[#08111f]"
 							>
 								Open workspace
-							</button>
+							</a>
 							<button
 								type="button"
 								className="rounded-xl border border-slate-700 px-5 py-3 font-semibold text-slate-200"

@@ -11,7 +11,7 @@
     "format": "turbo run format",
     "clean": "turbo run clean && pnpm store prune",
     "db:migrate": "pnpm --filter @mailsentinel/db db:migrate",
-    "db:seed": "pnpm --filter @mailsentinel/db db:seed",
+    "db:seed": "pnpm --filter @mailsentinel/auth db:seed",
     "contracts:generate": "pnpm --filter @mailsentinel/analyzer contracts:export && pnpm --filter @mailsentinel/contracts generate"
   },
   "devDependencies": {

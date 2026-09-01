@@ -1,4 +1,38 @@
-/** Auth integration boundary. The Better Auth instance is created by the Node runtime,
- * where validated secrets and the database connection are available. */
-export type SessionContext = { userId: string; organizationId: string };
-export const authPackage = "@mailsentinel/auth" as const;
+import * as schema from "@mailsentinel/db";
+import { createDb } from "@mailsentinel/db";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+
+export type AuthConfig = {
+	databaseUrl: string;
+	secret: string;
+	baseUrl: string;
+	allowSignUp?: boolean;
+};
+
+/** Creates the installed Better Auth version against its reviewed Drizzle schema. */
+export function createAuth(config: AuthConfig) {
+	const db = createDb(config.databaseUrl);
+	return betterAuth({
+		appName: "MailSentinel",
+		baseURL: config.baseUrl,
+		secret: config.secret,
+		database: drizzleAdapter(db, { provider: "pg", schema }),
+		emailAndPassword: {
+			enabled: true,
+			disableSignUp: !config.allowSignUp,
+			minPasswordLength: 12,
+		},
+		session: {
+			expiresIn: 60 * 60 * 24 * 7,
+			updateAge: 60 * 60 * 24,
+			cookieCache: { enabled: false },
+		},
+		advanced: {
+			cookiePrefix: "mailsentinel",
+			useSecureCookies: config.baseUrl.startsWith("https://"),
+		},
+	});
+}
+
+export type MailSentinelAuth = ReturnType<typeof createAuth>;
