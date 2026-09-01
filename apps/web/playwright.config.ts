@@ -29,7 +29,7 @@ export default defineConfig({
 	use: { baseURL: "http://127.0.0.1:3000", trace: "on-first-retry" },
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 	webServer: {
-		command: "pnpm dev",
+		command: `DATABASE_URL='${environment.DATABASE_URL}' BETTER_AUTH_SECRET='${environment.BETTER_AUTH_SECRET}' BETTER_AUTH_URL='${environment.BETTER_AUTH_URL}' ANALYZER_INTERNAL_URL='${environment.ANALYZER_INTERNAL_URL}' ANALYZER_SERVICE_TOKEN='${environment.ANALYZER_SERVICE_TOKEN}' S3_ENDPOINT='${environment.S3_ENDPOINT}' S3_REGION='${environment.S3_REGION}' S3_BUCKET='${environment.S3_BUCKET}' S3_ACCESS_KEY_ID='${environment.S3_ACCESS_KEY_ID}' S3_SECRET_ACCESS_KEY='${environment.S3_SECRET_ACCESS_KEY}' S3_FORCE_PATH_STYLE='${environment.S3_FORCE_PATH_STYLE}' APP_ENV='${environment.APP_ENV}' WEB_DATA_MODE='${environment.WEB_DATA_MODE}' pnpm dev`,
 		url: "http://127.0.0.1:3000",
 		reuseExistingServer: !process.env.CI,
 		env: environment,
