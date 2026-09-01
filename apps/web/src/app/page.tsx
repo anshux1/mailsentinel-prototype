@@ -2,22 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { SessionControl } from "@/components/session-control";
-
-async function getHealth() {
-	const response = await fetch("/api/rpc/system/health");
-	if (!response.ok) throw new Error("Health check failed");
-	return response.json() as Promise<{
-		ok: boolean;
-		service: string;
-		timestamp: string;
-	}>;
-}
+import { orpc } from "@/lib/orpc";
 
 export default function Home() {
-	const health = useQuery({
-		queryKey: ["system", "health"],
-		queryFn: getHealth,
-	});
+	const health = useQuery(orpc.system.health.queryOptions());
 	return (
 		<main className="min-h-screen bg-[#08111f] text-slate-100">
 			<div className="mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-8 lg:px-12">

@@ -11,7 +11,7 @@ Track each setup unit in commit order. A checked item means its implementation a
 - [x] S3 server-only client and private evidence metadata adapter
 - [x] Full Better Auth PostgreSQL adapter, demo session seed, sign-in/sign-out
 - [x] Tenant-scoped repositories and cross-tenant test
-- [ ] Complete typed oRPC procedures: health, case shell, analysis status, report placeholder
+- [x] Complete typed oRPC procedures: health, case shell, analysis status, report placeholder
 - [x] Internal analyzer contract models and deterministic generated contract artifact
 - [ ] Contract valid/invalid examples and CI drift gate
 - [ ] Infrastructure startup/readiness/reset scripts and runbook
