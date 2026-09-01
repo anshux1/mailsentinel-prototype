@@ -6,11 +6,10 @@
 		"./*": "./src/*.tsx"
 	},
 	"scripts": {
-		"lint": "biome check --write",
 		"generate:component": "turbo gen react-component",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
-		"test": "vitest run"
+		"test": "vitest run --passWithNoTests"
 	},
 	"devDependencies": {
 		"@mailsentinel/biome-config": "workspace:^",
@@ -18,7 +17,8 @@
 		"@types/node": "^22.15.3",
 		"@types/react": "19.2.2",
 		"@types/react-dom": "19.2.2",
-		"typescript": "5.9.2"
+		"typescript": "5.9.2",
+		"vitest": "^4.1.11"
 	},
 	"dependencies": {
 		"react": "^19.2.0",

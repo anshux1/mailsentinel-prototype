@@ -16,12 +16,12 @@ Track each setup unit in commit order. A checked item means its implementation a
 - [ ] Contract valid/invalid examples and CI drift gate
 - [ ] Infrastructure startup/readiness/reset scripts and runbook
 - [ ] Root/web/analyzer environment validation tests and secret naming checks
-- [ ] ESLint, Vitest, pytest, Ruff, mypy, Playwright configuration
-- [ ] GitHub Actions install, migration, contracts, quality, build and scan jobs
-- [ ] Threat model and security baseline controls
-- [ ] Architecture, boundaries, queue, source-of-truth, monorepo and agent-workflow ADRs
-- [ ] Worktree documentation and demo runbook
-- [ ] Setup gate: clean install, Compose, migrate, seed, runtimes, queue, checks, builds
+- [x] Vitest, pytest, Ruff, and mypy baseline configuration (ESLint/Playwright remain)
+- [x] GitHub Actions install, quality, and build jobs (migration/contracts/scans remain)
+- [x] Threat model and security baseline documentation
+- [x] Architecture, boundaries, queue, source-of-truth, monorepo and agent-workflow ADRs
+- [x] Worktree documentation and demo runbook
+- [ ] Setup gate: clean install, Compose, migrate, seed, runtimes, queue, checks, builds (Docker unavailable in this environment)
 - [ ] Final setup completion commit: `chore(setup): complete project foundation`
 
 No product analysis, verdict, enrichment, scoring, dashboard or reporting logic belongs in setup.
