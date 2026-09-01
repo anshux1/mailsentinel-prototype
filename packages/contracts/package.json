@@ -1,1 +1,17 @@
-{"name":"@mailsentinel/contracts","private":true,"type":"module","exports":{".":"./src/index.ts","./generated/*":"./generated/*"},"scripts":{"generate":"node scripts/generate.mjs","typecheck":"tsc --noEmit"},"devDependencies":{"@mailsentinel/typescript-config":"workspace:*","typescript":"5.9.2"}}
+{
+	"name": "@mailsentinel/contracts",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./generated/*": "./generated/*"
+	},
+	"scripts": {
+		"generate": "node scripts/generate.mjs",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@mailsentinel/typescript-config": "workspace:*",
+		"typescript": "5.9.2"
+	}
+}

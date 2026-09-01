@@ -1,1 +1,5 @@
-{"extends":"@mailsentinel/typescript-config/base.json","compilerOptions":{"module":"ESNext","moduleResolution":"Bundler"},"include":["src"]}
+{
+	"extends": "@mailsentinel/typescript-config/base.json",
+	"compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler" },
+	"include": ["src"]
+}
