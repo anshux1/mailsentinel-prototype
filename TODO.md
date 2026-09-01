@@ -16,8 +16,8 @@ Track each setup unit in commit order. A checked item means its implementation a
 - [x] Contract valid/invalid examples and CI drift gate
 - [x] Infrastructure startup/readiness/reset scripts and runbook
 - [x] Root/web/analyzer environment validation tests and secret naming checks
-- [x] Vitest, pytest, Ruff, and mypy baseline configuration (ESLint/Playwright remain)
-- [x] GitHub Actions install, quality, and build jobs (migration/contracts/scans remain)
+- [x] ESLint, Vitest, pytest, Ruff, mypy, and Playwright configuration
+- [x] GitHub Actions install, migration, contracts, quality, browser, build, secret and container scan jobs
 - [x] Threat model and security baseline documentation
 - [x] Architecture, boundaries, queue, source-of-truth, monorepo and agent-workflow ADRs
 - [x] Worktree documentation and demo runbook

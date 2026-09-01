@@ -6,6 +6,20 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://mailsentinel:mailsentinel@localhost:5432/mailsentinel
+      BETTER_AUTH_SECRET: ci-auth-secret-with-at-least-32-characters
+      BETTER_AUTH_URL: http://127.0.0.1:3000
+      ANALYZER_INTERNAL_URL: http://127.0.0.1:8000
+      ANALYZER_SERVICE_TOKEN: ci-analyzer-service-token
+      S3_ENDPOINT: http://127.0.0.1:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: mailsentinel-evidence
+      S3_ACCESS_KEY_ID: mailsentinel
+      S3_SECRET_ACCESS_KEY: ci-storage-secret-value
+      S3_FORCE_PATH_STYLE: "true"
+      APP_ENV: test
+      WEB_DATA_MODE: fixture
     services:
       postgres:
         image: postgres:17
@@ -16,6 +30,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - uses: gitleaks/gitleaks-action@v2
       - uses: pnpm/action-setup@v4
         with: {version: 9}
       - uses: actions/setup-node@v4
@@ -25,6 +40,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: uv sync --locked
         working-directory: apps/analyzer
+      - run: pnpm db:migrate && pnpm db:seed
       - run: pnpm contracts:check
       - run: pnpm lint && pnpm typecheck && pnpm test
       - run: pnpm build
+      - run: pnpm --filter @mailsentinel/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @mailsentinel/web test:e2e
+      - run: pnpm audit --audit-level high
+      - run: docker build -t mailsentinel-analyzer:ci apps/analyzer
+      - uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: mailsentinel-analyzer:ci
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true

@@ -32,6 +32,7 @@ function databaseUrl(): string {
 export const router = {
 	system: {
 		health: base
+			.route({ method: "GET" })
 			.output(
 				z.object({
 					ok: z.boolean(),

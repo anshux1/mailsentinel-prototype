@@ -1,5 +1,5 @@
 import { createDb, memberships, organizations } from "@mailsentinel/db";
-import { createAuth } from "./index.js";
+import { createAuth } from "./index";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgresql://mailsentinel:mailsentinel@localhost:5432/mailsentinel";
 const secret = process.env.BETTER_AUTH_SECRET ?? "local-development-auth-secret-change-me";

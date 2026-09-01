@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import * as schema from "./schema.js";
+import * as schema from "./schema";
 
 export type TenantContext = { organizationId: string };
 export type TenantCaseKey = TenantContext & { caseId: string };
