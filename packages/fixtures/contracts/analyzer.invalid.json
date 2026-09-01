@@ -1,0 +1,12 @@
+{
+	"AnalysisIntakeRequest": {
+		"caseId": "",
+		"organizationId": "",
+		"analysisRunId": "",
+		"artifact": { "objectKey": "public/file.eml", "sha256": "bad", "byteSize": 0 },
+		"requestedAt": "not-a-date"
+	},
+	"AnalysisIntakeAccepted": { "analysisRunId": 42, "status": "complete" },
+	"AnalysisStatus": { "analysisRunId": null, "status": "unknown" },
+	"AnalysisFailure": { "code": 500, "message": null }
+}

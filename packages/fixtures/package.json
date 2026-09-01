@@ -1,0 +1,7 @@
+{
+	"name": "@mailsentinel/fixtures",
+	"private": true,
+	"exports": {
+		"./contracts/*": "./contracts/*"
+	}
+}

@@ -25,5 +25,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: uv sync --locked
         working-directory: apps/analyzer
+      - run: pnpm contracts:check
       - run: pnpm lint && pnpm typecheck && pnpm test
       - run: pnpm build

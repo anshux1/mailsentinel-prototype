@@ -13,7 +13,7 @@ Track each setup unit in commit order. A checked item means its implementation a
 - [x] Tenant-scoped repositories and cross-tenant test
 - [x] Complete typed oRPC procedures: health, case shell, analysis status, report placeholder
 - [x] Internal analyzer contract models and deterministic generated contract artifact
-- [ ] Contract valid/invalid examples and CI drift gate
+- [x] Contract valid/invalid examples and CI drift gate
 - [ ] Infrastructure startup/readiness/reset scripts and runbook
 - [ ] Root/web/analyzer environment validation tests and secret naming checks
 - [x] Vitest, pytest, Ruff, and mypy baseline configuration (ESLint/Playwright remain)

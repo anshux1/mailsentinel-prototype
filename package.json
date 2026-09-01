@@ -1,27 +1,27 @@
 {
-  "name": "mailsentinel",
-  "private": true,
-  "scripts": {
-    "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
-    "lint": "turbo run lint",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "format": "turbo run format",
-    "clean": "turbo run clean && pnpm store prune",
-    "db:migrate": "pnpm --filter @mailsentinel/db db:migrate",
-    "db:seed": "pnpm --filter @mailsentinel/auth db:seed",
-    "contracts:generate": "pnpm --filter @mailsentinel/analyzer contracts:export && pnpm --filter @mailsentinel/contracts generate"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.3.8",
-    "prettier": "^3.6.2",
-    "turbo": "^2.10.12",
-    "typescript": "5.9.2"
-  },
-  "packageManager": "pnpm@9.0.0",
-  "engines": {
-    "node": ">=18"
-  }
+	"name": "mailsentinel",
+	"private": true,
+	"scripts": {
+		"build": "turbo run build",
+		"dev": "turbo run dev --parallel",
+		"lint": "turbo run lint",
+		"typecheck": "turbo run typecheck",
+		"test": "turbo run test",
+		"format": "turbo run format",
+		"clean": "turbo run clean && pnpm store prune",
+		"db:migrate": "pnpm --filter @mailsentinel/db db:migrate",
+		"db:seed": "pnpm --filter @mailsentinel/auth db:seed",
+		"contracts:generate": "pnpm --filter @mailsentinel/analyzer contracts:export && pnpm --filter @mailsentinel/contracts generate",
+		"contracts:check": "pnpm contracts:generate && git diff --exit-code -- packages/contracts/generated"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.3.8",
+		"prettier": "^3.6.2",
+		"turbo": "^2.10.12",
+		"typescript": "5.9.2"
+	},
+	"packageManager": "pnpm@9.0.0",
+	"engines": {
+		"node": ">=18"
+	}
 }

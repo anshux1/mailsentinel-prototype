@@ -7,11 +7,15 @@
 		"./generated/*": "./generated/*"
 	},
 	"scripts": {
-		"generate": "node scripts/generate.mjs",
+		"generate": "openapi-typescript ../../apps/analyzer/openapi.json -o generated/analyzer.ts && node scripts/generate.mjs",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
 		"@mailsentinel/typescript-config": "workspace:*",
+		"openapi-typescript": "^7.13.0",
 		"typescript": "5.9.2"
+	},
+	"dependencies": {
+		"openapi-fetch": "^0.17.0"
 	}
 }
