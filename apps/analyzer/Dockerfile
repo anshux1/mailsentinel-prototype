@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM ghcr.io/astral-sh/uv:0.6.14-python3.12-bookworm-slim
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
 # Refresh Debian security packages included in the uv base image.
