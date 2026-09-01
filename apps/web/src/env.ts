@@ -24,21 +24,25 @@ export const webServerSchema = z.object({
 	WEB_DATA_MODE: z.enum(["live", "fixture", "offline"]).default("fixture"),
 });
 
-export function validateWebEnvironment(
-	values: Record<string, string | undefined>,
-) {
+const publicSecretName =
+	/(SECRET|TOKEN|PASSWORD|DATABASE|ACCESS_KEY|API_KEY|PRIVATE|CREDENTIAL)/;
+
+function rejectPublicSecretNames(values: Record<string, string | undefined>) {
 	for (const name of Object.keys(values)) {
-		if (
-			name.startsWith("NEXT_PUBLIC_") &&
-			/(SECRET|TOKEN|PASSWORD|DATABASE|ACCESS_KEY|API_KEY|PRIVATE|CREDENTIAL)/.test(
-				name,
-			)
-		) {
+		if (name.startsWith("NEXT_PUBLIC_") && publicSecretName.test(name)) {
 			throw new Error(`Potential secret must not use NEXT_PUBLIC_: ${name}`);
 		}
 	}
+}
+
+export function validateWebEnvironment(
+	values: Record<string, string | undefined>,
+) {
+	rejectPublicSecretNames(values);
 	return webServerSchema.parse(values);
 }
+
+rejectPublicSecretNames(process.env);
 
 export const env = createEnv({
 	server: webServerSchema.shape,
