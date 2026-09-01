@@ -1,5 +1,5 @@
 {
-	"name": "@repo/ui",
+	"name": "@mailsentinel/ui",
 	"version": "0.0.0",
 	"private": true,
 	"exports": {
@@ -8,11 +8,13 @@
 	"scripts": {
 		"lint": "biome check --write",
 		"generate:component": "turbo gen react-component",
-		"check-types": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"test": "vitest run"
 	},
 	"devDependencies": {
-		"@repo/biome-config": "workspace:^",
-		"@repo/typescript-config": "workspace:*",
+		"@mailsentinel/biome-config": "workspace:^",
+		"@mailsentinel/typescript-config": "workspace:*",
 		"@types/node": "^22.15.3",
 		"@types/react": "19.2.2",
 		"@types/react-dom": "19.2.2",

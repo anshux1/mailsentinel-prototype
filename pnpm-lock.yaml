@@ -23,7 +23,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@repo/ui':
+      '@mailsentinel/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       next:
@@ -36,10 +36,10 @@ importers:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
     devDependencies:
-      '@repo/biome-config':
+      '@mailsentinel/biome-config':
         specifier: workspace:^
         version: link:../../packages/biome-config
-      '@repo/typescript-config':
+      '@mailsentinel/typescript-config':
         specifier: workspace:*
         version: link:../../packages/typescript-config
       '@tailwindcss/postcss':
@@ -74,10 +74,10 @@ importers:
         specifier: ^19.2.0
         version: 19.2.0(react@19.2.0)
     devDependencies:
-      '@repo/biome-config':
+      '@mailsentinel/biome-config':
         specifier: workspace:^
         version: link:../biome-config
-      '@repo/typescript-config':
+      '@mailsentinel/typescript-config':
         specifier: workspace:*
         version: link:../typescript-config
       '@types/node':

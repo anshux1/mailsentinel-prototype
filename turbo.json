@@ -4,15 +4,22 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", ".env*"],
+      "inputs": ["$TURBO_DEFAULT$", ".env*", "pnpm-lock.yaml", "pyproject.toml", "uv.lock", "migrations/**"],
       "outputs": [".next/**", "!.next/cache/**", "!.next/dev/**"]
     },
     "lint": {
       "dependsOn": ["^lint"]
     },
-    "check-types": {
-      "dependsOn": ["^check-types"]
+    "typecheck": {
+      "dependsOn": ["^typecheck"]
     },
+    "test": { "dependsOn": ["^test"], "outputs": ["coverage/**"] },
+    "format": {},
+    "clean": { "cache": false },
+    "contracts:generate": { "dependsOn": ["^contracts:generate"], "outputs": ["generated/**"] },
+    "db:generate": { "cache": false },
+    "db:migrate": { "cache": false },
+    "db:seed": { "cache": false },
     "dev": {
       "cache": false,
       "persistent": true
