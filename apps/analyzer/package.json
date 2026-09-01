@@ -1,0 +1,13 @@
+{
+  "name": "@mailsentinel/analyzer",
+  "private": true,
+  "scripts": {
+    "dev": "uv run uvicorn app.main:app --reload --port 8000",
+    "worker": "uv run dramatiq app.tasks.broker",
+    "lint": "uv run ruff check . && uv run ruff format --check .",
+    "typecheck": "uv run mypy app",
+    "test": "uv run pytest",
+    "format": "uv run ruff format .",
+    "contracts:export": "uv run python scripts/export_openapi.py"
+  }
+}
