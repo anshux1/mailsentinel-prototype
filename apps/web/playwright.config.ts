@@ -2,8 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 const environment = {
 	DATABASE_URL:
+		process.env.DATABASE_URL ??
 		"postgresql://mailsentinel:mailsentinel@localhost:5432/mailsentinel",
-	BETTER_AUTH_SECRET: "playwright-auth-secret-at-least-32-characters",
+	BETTER_AUTH_SECRET:
+		process.env.BETTER_AUTH_SECRET ??
+		"playwright-auth-secret-at-least-32-characters",
 	BETTER_AUTH_URL: "http://127.0.0.1:3000",
 	ANALYZER_INTERNAL_URL: "http://127.0.0.1:8000",
 	ANALYZER_SERVICE_TOKEN: "playwright-analyzer-token",

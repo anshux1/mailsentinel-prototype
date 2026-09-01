@@ -1,9 +1,9 @@
 import "server-only";
 
-import { cases, createDb, DrizzleCaseRepository } from "@mailsentinel/db";
+import { cases, DrizzleCaseRepository } from "@mailsentinel/db";
 import { ORPCError, os } from "@orpc/server";
 import { z } from "zod";
-import { env } from "@/env";
+import { db } from "@/server/db";
 import type { RpcContext } from "./context";
 
 const base = os.$context<RpcContext>();
@@ -24,10 +24,6 @@ const deferred = z.object({
 	status: z.literal("deferred"),
 	reason: z.string(),
 });
-
-function databaseUrl(): string {
-	return env.DATABASE_URL;
-}
 
 export const router = {
 	system: {
@@ -50,14 +46,14 @@ export const router = {
 		list: protectedProcedure
 			.output(z.array(caseShell))
 			.handler(async ({ context }) => {
-				const repository = new DrizzleCaseRepository(createDb(databaseUrl()));
+				const repository = new DrizzleCaseRepository(db);
 				return repository.listCases({ organizationId: context.organizationId });
 			}),
 		get: protectedProcedure
 			.input(z.object({ caseId: z.string().min(1) }))
 			.output(caseShell.nullable())
 			.handler(async ({ context, input }) => {
-				const repository = new DrizzleCaseRepository(createDb(databaseUrl()));
+				const repository = new DrizzleCaseRepository(db);
 				return repository.getCase({
 					organizationId: context.organizationId,
 					caseId: input.caseId,
@@ -67,7 +63,7 @@ export const router = {
 			.input(z.object({ title: z.string().min(1).max(160) }))
 			.output(caseShell)
 			.handler(async ({ context, input }) => {
-				const [created] = await createDb(databaseUrl())
+				const [created] = await db
 					.insert(cases)
 					.values({
 						id: `case_${crypto.randomUUID()}`,

@@ -1,4 +1,5 @@
-import { createDb, memberships, organizations } from "@mailsentinel/db";
+import { account, createDb, memberships, organizations } from "@mailsentinel/db";
+import { hashPassword } from "better-auth/crypto";
 import { createAuth } from "./index";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgresql://mailsentinel:mailsentinel@localhost:5432/mailsentinel";
@@ -19,9 +20,22 @@ try {
 	userId = existing.id;
 }
 
+const passwordHash = await hashPassword(password);
+await db
+	.insert(account)
+	.values({
+		id: "account_demo_credential",
+		accountId: userId,
+		providerId: "credential",
+		userId,
+		password: passwordHash,
+	})
+	.onConflictDoNothing();
 await db.insert(organizations).values({ id: "org_demo", name: "MailSentinel Demo" }).onConflictDoNothing();
 await db
 	.insert(memberships)
 	.values({ id: "membership_demo", organizationId: "org_demo", userId, role: "owner" })
 	.onConflictDoNothing();
 console.log(`Seeded demo user ${email} and organization org_demo`);
+await db.$client.end();
+process.exit(0);

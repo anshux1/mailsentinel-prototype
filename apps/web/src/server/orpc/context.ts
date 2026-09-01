@@ -1,9 +1,9 @@
 import "server-only";
 
-import { createDb, memberships } from "@mailsentinel/db";
+import { memberships } from "@mailsentinel/db";
 import { eq } from "drizzle-orm";
-import { env } from "@/env";
 import { auth } from "@/server/auth";
+import { db } from "@/server/db";
 
 export type RpcContext = {
 	requestId: string;
@@ -18,7 +18,6 @@ export async function createRpcContext(request: Request): Promise<RpcContext> {
 	}
 	const session = await auth.api.getSession({ headers: request.headers });
 	if (!session) return { requestId, userId: null, organizationId: null };
-	const db = createDb(env.DATABASE_URL);
 	const membership = await db.query.memberships.findFirst({
 		where: eq(memberships.userId, session.user.id),
 	});
