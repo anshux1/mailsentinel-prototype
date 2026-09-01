@@ -16,6 +16,7 @@
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.1124.0",
 		"@mailsentinel/auth": "workspace:^",
+		"@mailsentinel/contracts": "workspace:^",
 		"@mailsentinel/db": "workspace:^",
 		"@mailsentinel/ui": "workspace:*",
 		"@orpc/client": "^1.15.0",

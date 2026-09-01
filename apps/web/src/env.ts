@@ -1,3 +1,4 @@
+import "server-only";
 import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 
@@ -11,7 +12,7 @@ export const webServerSchema = z.object({
 	S3_REGION: z.string().min(1).default("us-east-1"),
 	S3_BUCKET: z.string().min(1).default("mailsentinel-evidence"),
 	S3_ACCESS_KEY_ID: z.string().min(1),
-	S3_SECRET_ACCESS_KEY: z.string().min(8),
+	S3_SECRET_ACCESS_KEY: z.string().min(16),
 	S3_FORCE_PATH_STYLE: z
 		.enum(["true", "false"])
 		.default("true")
@@ -29,7 +30,9 @@ export function validateWebEnvironment(
 	for (const name of Object.keys(values)) {
 		if (
 			name.startsWith("NEXT_PUBLIC_") &&
-			/(SECRET|TOKEN|PASSWORD|DATABASE|ACCESS_KEY)/.test(name)
+			/(SECRET|TOKEN|PASSWORD|DATABASE|ACCESS_KEY|API_KEY|PRIVATE|CREDENTIAL)/.test(
+				name,
+			)
 		) {
 			throw new Error(`Potential secret must not use NEXT_PUBLIC_: ${name}`);
 		}

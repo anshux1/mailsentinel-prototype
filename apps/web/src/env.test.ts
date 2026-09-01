@@ -1,5 +1,8 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
+
 import { validateWebEnvironment, webServerSchema } from "./env";
 
 const valid = {
@@ -12,7 +15,7 @@ const valid = {
 	S3_REGION: "us-east-1",
 	S3_BUCKET: "mailsentinel-evidence",
 	S3_ACCESS_KEY_ID: "mailsentinel",
-	S3_SECRET_ACCESS_KEY: "local-secret",
+	S3_SECRET_ACCESS_KEY: "local-secret-value",
 	S3_FORCE_PATH_STYLE: "true",
 	MAX_EML_BYTES: "26214400",
 	APP_ENV: "development",
@@ -32,10 +35,13 @@ describe("web environment", () => {
 		["invalid mode", { ...valid, WEB_DATA_MODE: "maybe" }],
 	])("rejects %s", (_name, input) =>
 		expect(() => validateWebEnvironment(input)).toThrow());
-	it("rejects browser-exposed secret names", () =>
-		expect(() =>
-			validateWebEnvironment({ ...valid, NEXT_PUBLIC_DATABASE_URL: "secret" }),
-		).toThrow(/NEXT_PUBLIC/));
+	it.each([
+		["database URL", "NEXT_PUBLIC_DATABASE_URL"],
+		["API key", "NEXT_PUBLIC_PROVIDER_API_KEY"],
+	])("rejects browser-exposed %s", (_name, key) =>
+		expect(() => validateWebEnvironment({ ...valid, [key]: "secret" })).toThrow(
+			/NEXT_PUBLIC/,
+		));
 	it("documents every schema variable", () => {
 		const documented = new Set(
 			readFileSync(new URL("../.env.example", import.meta.url), "utf8").match(
