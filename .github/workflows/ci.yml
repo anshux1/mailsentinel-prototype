@@ -38,6 +38,7 @@ jobs:
         with: {version: "0.6.14", enable-cache: true}
       - run: pnpm install --frozen-lockfile
       - run: uv sync --locked
+      - run: uv sync --locked
         working-directory: apps/analyzer
       - run: pnpm db:migrate && pnpm db:seed
       - run: pnpm contracts:check
