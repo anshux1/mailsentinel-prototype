@@ -8,16 +8,21 @@
 		"build": "next build",
 		"start": "next start",
 		"lint": "biome check",
-		"format": "biome format --write",
+		"format": "biome format --write .",
 		"typecheck": "next typegen && tsc --noEmit",
-		"test": "vitest run",
-		"format": "biome format --write ."
+		"test": "vitest run"
 	},
 	"dependencies": {
 		"@mailsentinel/ui": "workspace:*",
+		"@orpc/client": "^1.15.0",
+		"@orpc/server": "^1.15.0",
+		"@orpc/tanstack-query": "^1.15.0",
+		"@t3-oss/env-nextjs": "^0.13.11",
+		"@tanstack/react-query": "^5.102.8",
 		"next": "16.3.4",
 		"react": "19.2.8",
-		"react-dom": "19.2.8"
+		"react-dom": "19.2.8",
+		"zod": "^4.5.4"
 	},
 	"devDependencies": {
 		"@mailsentinel/biome-config": "workspace:^",
@@ -27,6 +32,7 @@
 		"@types/react": "19.2.2",
 		"@types/react-dom": "19.2.2",
 		"tailwindcss": "^4",
-		"typescript": "5.9.2"
+		"typescript": "5.9.2",
+		"vitest": "^4.1.11"
 	}
 }
