@@ -31,7 +31,7 @@ pnpm build
 pnpm --filter @mailsentinel/web test:e2e
 ```
 
-`pnpm contracts:check` exports FastAPI OpenAPI, regenerates `packages/contracts/generated`, and fails if the committed artifact drifts. See [`TODO.md`](TODO.md), [`docs/demo-runbook.md`](docs/demo-runbook.md), [`docs/threat-model.md`](docs/threat-model.md) and [`docs/agent-workflow.md`](docs/agent-workflow.md).
+`pnpm contracts:check` exports FastAPI OpenAPI, regenerates `packages/contracts/generated`, and fails if the committed artifact drifts. Product work is deferred in [`PLAN.md`](PLAN.md). See [`TODO.md`](TODO.md), [`docs/demo-runbook.md`](docs/demo-runbook.md), [`docs/threat-model.md`](docs/threat-model.md) and [`docs/agent-workflow.md`](docs/agent-workflow.md).
 
 ## Workspaces
 
