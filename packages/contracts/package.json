@@ -9,6 +9,7 @@
 	},
 	"scripts": {
 		"generate": "openapi-typescript ../../apps/analyzer/openapi.json -o generated/analyzer.ts && node scripts/generate.mjs",
+		"contracts:generate": "pnpm --filter @mailsentinel/analyzer contracts:export && pnpm generate",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {

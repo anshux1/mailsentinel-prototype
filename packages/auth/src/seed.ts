@@ -34,14 +34,17 @@ try {
 		where: and(eq(account.userId, userId), eq(account.providerId, "credential")),
 	});
 	if (!credential) {
-		await db.insert(account).values({
-			id: `account_${userId}_credential`,
-			accountId: userId,
-			providerId: "credential",
-			issuer: "local:credential",
-			userId,
-			password: await hashPassword(password),
-		});
+		await db
+			.insert(account)
+			.values({
+				id: `account_${userId}_credential`,
+				accountId: userId,
+				providerId: "credential",
+				issuer: "local:credential",
+				userId,
+				password: await hashPassword(password),
+			})
+			.onConflictDoNothing();
 	}
 
 	await db.insert(organizations).values({ id: "org_demo", name: "MailSentinel Demo" }).onConflictDoNothing();

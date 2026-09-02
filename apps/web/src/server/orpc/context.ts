@@ -13,9 +13,6 @@ export type RpcContext = {
 
 export async function createRpcContext(request: Request): Promise<RpcContext> {
 	const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
-	if (!request.headers.get("cookie")?.includes("mailsentinel.session_token")) {
-		return { requestId, userId: null, organizationId: null };
-	}
 	const session = await auth.api.getSession({ headers: request.headers });
 	if (!session) return { requestId, userId: null, organizationId: null };
 	const membership = await db.query.memberships.findFirst({

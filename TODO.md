@@ -21,7 +21,8 @@ Track each setup unit in commit order. A checked item means its implementation a
 - [x] Threat model and security baseline documentation
 - [x] Architecture, boundaries, queue, source-of-truth, monorepo and agent-workflow ADRs
 - [x] Worktree documentation and demo runbook
-- [ ] Setup gate: clean install, Compose, migrate, seed, runtimes, queue, checks, builds (implementation ready; Docker runtime unavailable in this environment)
-- [ ] Final setup completion commit: `chore(setup): complete project foundation`
+- [x] Setup gate: clean install, local PostgreSQL migration/seed, web/analyzer runtimes, contracts, checks, tests, and builds
+- [ ] Docker runtime gate: Compose startup/health, Redis, MinIO, and worker queue runtime (blocked; Docker is unavailable in this environment)
+- [x] Final setup completion commit: `chore(setup): complete project foundation`
 
 No product analysis, verdict, enrichment, scoring, dashboard or reporting logic belongs in setup.

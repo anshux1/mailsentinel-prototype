@@ -40,7 +40,7 @@
 				"apps/analyzer/app/contracts/**",
 				"apps/analyzer/openapi.json"
 			],
-			"outputs": [".next/**", "!.next/cache/**", "!.next/dev/**"]
+			"outputs": [".next/**", "!.next/cache/**", "!.next/dev/**", "app/**/__pycache__/**"]
 		},
 		"lint": {
 			"dependsOn": ["^lint"]
@@ -48,13 +48,13 @@
 		"typecheck": {
 			"dependsOn": ["^typecheck"]
 		},
-		"test": { "dependsOn": ["^test"], "outputs": ["coverage/**"] },
+		"test": { "dependsOn": ["^test"] },
 		"format": {},
 		"clean": { "cache": false },
 		"contracts:generate": { "dependsOn": ["^contracts:generate"], "outputs": ["generated/**"] },
 		"db:generate": { "cache": false },
 		"db:migrate": { "cache": false },
-		"db:seed": { "cache": false },
+		"db:seed": { "dependsOn": ["^db:seed"], "cache": false },
 		"dev": {
 			"cache": false,
 			"persistent": true
