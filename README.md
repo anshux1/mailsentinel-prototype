@@ -24,6 +24,7 @@ The web application runs at `http://localhost:3000`. PostgreSQL, Redis, MinIO, t
 
 ```bash
 pnpm contracts:check
+pnpm env:check
 pnpm lint
 pnpm typecheck
 pnpm test

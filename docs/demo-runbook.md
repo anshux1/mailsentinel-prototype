@@ -31,6 +31,7 @@ Override `DEMO_USER_EMAIL` and `DEMO_USER_PASSWORD` when seeding outside disposa
 
 ```bash
 pnpm contracts:check
+pnpm env:check
 pnpm lint
 pnpm typecheck
 pnpm test
