@@ -69,6 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           compose="docker compose -f infra/compose.yaml"
+          $compose exec -T analyzer python -c "import urllib.request; response = urllib.request.urlopen('http://localhost:8000/health/ready'); assert response.status == 200"
           $compose stop worker
           $compose exec -T analyzer python - <<'PY'
           import json
