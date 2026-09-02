@@ -1,0 +1,16 @@
+{
+	"AnalysisIntakeRequest": {
+		"caseId": "case_01",
+		"organizationId": "org_01",
+		"analysisRunId": "run_01",
+		"artifact": {
+			"objectKey": "organizations/org_01/cases/case_01/artifacts/artifact_01.eml",
+			"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"byteSize": 24831
+		},
+		"requestedAt": "2026-01-01T00:00:00Z"
+	},
+	"AnalysisIntakeAccepted": { "analysisRunId": "run_01", "status": "accepted" },
+	"AnalysisStatus": { "analysisRunId": "run_01", "status": "queued" },
+	"AnalysisFailure": { "code": "intake_invalid", "message": "Request validation failed", "requestId": "request_01" }
+}

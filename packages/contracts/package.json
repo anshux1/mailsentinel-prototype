@@ -1,0 +1,24 @@
+{
+	"name": "@mailsentinel/contracts",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts",
+		"./analyzer-client": "./src/analyzer-client.ts",
+		"./generated/*": "./generated/*"
+	},
+	"scripts": {
+		"generate": "openapi-typescript ../../apps/analyzer/openapi.json -o generated/analyzer.ts && node scripts/generate.mjs",
+		"contracts:generate": "pnpm --filter @mailsentinel/analyzer contracts:export && pnpm generate",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@mailsentinel/typescript-config": "workspace:*",
+		"openapi-typescript": "^7.13.0",
+		"typescript": "5.9.2"
+	},
+	"dependencies": {
+		"openapi-fetch": "^0.17.0",
+		"server-only": "^0.0.1"
+	}
+}

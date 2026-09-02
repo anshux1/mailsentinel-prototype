@@ -1,135 +1,44 @@
-# Turborepo starter
+# MailSentinel
 
-This Turborepo starter is maintained by the Turborepo core team.
+MailSentinel is a pnpm/Turborepo monorepo for secure email-forensics workflows. Setup intentionally contains only foundation contracts, health endpoints and safe deferred jobs—no production verdict logic.
 
-## Using this example
+## Requirements
 
-Run the following command:
+Git 2.40+, Node 22 LTS, pnpm 9, Python 3.12, uv and Docker Compose. The Node and Python dependency lockfiles are committed. Do not bypass the pinned/project versions without recording the exception.
 
-```sh
-npx create-turbo@latest
+## Local setup
+
+```bash
+pnpm install --frozen-lockfile
+uv sync --locked
+cd apps/analyzer && uv sync --locked && cd ../..
+cp apps/web/.env.example apps/web/.env
+cp apps/analyzer/.env.example apps/analyzer/.env
+pnpm infra:start
+pnpm dev
 ```
 
-## What's inside?
+The web application runs at `http://localhost:3000`. PostgreSQL, Redis, MinIO, the private analyzer and the worker run through Compose. FastAPI is not host-published. Demo sign-in is `demo@mailsentinel.local` / `MailSentinel-Demo-2026!`.
 
-This Turborepo includes the following packages/apps:
+## Quality and contracts
 
-### Apps and Packages
-
-- `docs`: a [Next.js](https://nextjs.org/) app
-- `web`: another [Next.js](https://nextjs.org/) app
-- `@repo/ui`: a stub React component library shared by both `web` and `docs` applications
-- `@repo/biome-config`: `biome` configurations
-- `@repo/typescript-config`: `tsconfig.json`s used throughout the monorepo
-
-Each package/app is 100% [TypeScript](https://www.typescriptlang.org/).
-
-### Utilities
-
-This Turborepo has some additional tools already setup for you:
-
-- [TypeScript](https://www.typescriptlang.org/) for static type checking
-- [Biome](https://biomejs.dev/) for code linting
-- [Prettier](https://prettier.io) for code formatting
-
-### Build
-
-To build all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build
-pnpm dlx turbo build
-pnpm exec turbo build
+```bash
+pnpm contracts:check
+pnpm env:check
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm --filter @mailsentinel/web test:e2e
 ```
 
-You can build a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
+`pnpm contracts:check` exports FastAPI OpenAPI, regenerates `packages/contracts/generated`, and fails if the committed artifact drifts. Product work is deferred in [`PLAN.md`](PLAN.md). See [`TODO.md`](TODO.md), [`docs/demo-runbook.md`](docs/demo-runbook.md), [`docs/threat-model.md`](docs/threat-model.md) and [`docs/agent-workflow.md`](docs/agent-workflow.md).
 
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo build --filter=docs
+## Workspaces
 
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-pnpm exec turbo build --filter=docs
-```
+- `apps/web` — Next.js 16, React 19, Tailwind 4, oRPC and TanStack Query
+- `apps/analyzer` — FastAPI, Pydantic, Dramatiq and Redis
+- `packages/db` / `packages/auth` / `packages/contracts` / `packages/ui`
+- `infra` — PostgreSQL, Redis and private MinIO Compose stack
 
-### Develop
-
-To develop all apps and packages, run the following command:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev
-pnpm exec turbo dev
-pnpm exec turbo dev
-```
-
-You can develop a specific package by using a [filter](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters):
-
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo dev --filter=web
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-pnpm exec turbo dev --filter=web
-```
-
-### Remote Caching
-
-> [!TIP]
-> Vercel Remote Cache is free for all plans. Get started today at [vercel.com](https://vercel.com/signup?/signup?utm_source=remote-cache-sdk&utm_campaign=free_remote_cache).
-
-Turborepo can use a technique known as [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching) to share cache artifacts across machines, enabling you to share build caches with your team and CI/CD pipelines.
-
-By default, Turborepo will cache locally. To enable Remote Caching you will need an account with Vercel. If you don't have an account you can [create one](https://vercel.com/signup?utm_source=turborepo-examples), then enter the following commands:
-
-```
-cd my-turborepo
-
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo login
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo login
-pnpm exec turbo login
-pnpm exec turbo login
-```
-
-This will authenticate the Turborepo CLI with your [Vercel account](https://vercel.com/docs/concepts/personal-accounts/overview).
-
-Next, you can link your Turborepo to your Remote Cache by running the following command from the root of your Turborepo:
-
-```
-# With [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation) installed (recommended)
-turbo link
-
-# Without [global `turbo`](https://turborepo.dev/docs/getting-started/installation#global-installation), use your package manager
-npx turbo link
-pnpm exec turbo link
-pnpm exec turbo link
-```
-
-## Useful Links
-
-Learn more about the power of Turborepo:
-
-- [Tasks](https://turborepo.dev/docs/crafting-your-repository/running-tasks)
-- [Caching](https://turborepo.dev/docs/crafting-your-repository/caching)
-- [Remote Caching](https://turborepo.dev/docs/core-concepts/remote-caching)
-- [Filtering](https://turborepo.dev/docs/crafting-your-repository/running-tasks#using-filters)
-- [Configuration Options](https://turborepo.dev/docs/reference/configuration)
-- [CLI Usage](https://turborepo.dev/docs/reference/command-line-reference)
+Use separate worktrees for parallel agents. Setup decisions and ownership rules are documented in [`docs/agent-workflow.md`](docs/agent-workflow.md).

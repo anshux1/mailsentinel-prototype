@@ -1,27 +1,50 @@
 {
-  "name": "web",
-  "version": "0.1.0",
-  "type": "module",
-  "private": true,
-  "scripts": {
-    "dev": "next dev --port 3000",
-    "build": "next build",
-    "start": "next start",
-    "lint": "biome check --write",
-    "check-types": "next typegen && tsc --noEmit"
-  },
-  "dependencies": {
-    "@repo/ui": "workspace:*",
-    "next": "16.3.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
-  },
-  "devDependencies": {
-    "@repo/biome-config": "workspace:^",
-    "@repo/typescript-config": "workspace:*",
-    "@types/node": "^22.15.3",
-    "@types/react": "19.2.2",
-    "@types/react-dom": "19.2.2",
-    "typescript": "5.9.2"
-  }
+	"name": "@mailsentinel/web",
+	"version": "0.1.0",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"dev": "next dev --port 3000",
+		"build": "next build",
+		"start": "next start",
+		"lint": "biome check && eslint .",
+		"format": "biome format --write .",
+		"typecheck": "next typegen && tsc --noEmit",
+		"test": "vitest run --passWithNoTests",
+		"test:e2e": "playwright test"
+	},
+	"dependencies": {
+		"@aws-sdk/client-s3": "^3.1124.0",
+		"@mailsentinel/auth": "workspace:^",
+		"@mailsentinel/contracts": "workspace:^",
+		"@mailsentinel/db": "workspace:^",
+		"@mailsentinel/ui": "workspace:*",
+		"@orpc/client": "^1.15.0",
+		"@orpc/server": "^1.15.0",
+		"@orpc/tanstack-query": "^1.15.0",
+		"@t3-oss/env-nextjs": "^0.13.11",
+		"@tanstack/react-query": "^5.102.8",
+		"better-auth": "^1.2.7",
+		"drizzle-orm": "^0.45.2",
+		"next": "16.3.4",
+		"postgres": "^3.4.5",
+		"react": "19.2.8",
+		"react-dom": "19.2.8",
+		"server-only": "^0.0.1",
+		"zod": "^4.5.4"
+	},
+	"devDependencies": {
+		"@mailsentinel/biome-config": "workspace:^",
+		"@mailsentinel/eslint-config": "workspace:^",
+		"@mailsentinel/typescript-config": "workspace:*",
+		"@playwright/test": "^1.62.1",
+		"@tailwindcss/postcss": "^4",
+		"@types/node": "^22.15.3",
+		"@types/react": "19.2.2",
+		"@types/react-dom": "19.2.2",
+		"eslint": "^9.39.0",
+		"tailwindcss": "^4",
+		"typescript": "5.9.2",
+		"vitest": "^4.1.11"
+	}
 }

@@ -1,0 +1,261 @@
+{
+  "components": {
+    "schemas": {
+      "AnalysisIntakeAccepted": {
+        "properties": {
+          "analysisRunId": {
+            "title": "Analysisrunid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AnalysisStatusValue",
+            "default": "accepted"
+          }
+        },
+        "required": [
+          "analysisRunId"
+        ],
+        "title": "AnalysisIntakeAccepted",
+        "type": "object"
+      },
+      "AnalysisIntakeRequest": {
+        "examples": [
+          {
+            "analysisRunId": "run_01",
+            "artifact": {
+              "byteSize": 24831,
+              "objectKey": "organizations/org_01/cases/case_01/artifacts/artifact_01.eml",
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "caseId": "case_01",
+            "organizationId": "org_01",
+            "requestedAt": "2026-01-01T00:00:00Z"
+          }
+        ],
+        "properties": {
+          "analysisRunId": {
+            "minLength": 1,
+            "title": "Analysisrunid",
+            "type": "string"
+          },
+          "artifact": {
+            "$ref": "#/components/schemas/Artifact"
+          },
+          "caseId": {
+            "minLength": 1,
+            "title": "Caseid",
+            "type": "string"
+          },
+          "organizationId": {
+            "minLength": 1,
+            "title": "Organizationid",
+            "type": "string"
+          },
+          "requestedAt": {
+            "format": "date-time",
+            "title": "Requestedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "caseId",
+          "organizationId",
+          "analysisRunId",
+          "artifact",
+          "requestedAt"
+        ],
+        "title": "AnalysisIntakeRequest",
+        "type": "object"
+      },
+      "AnalysisStatusValue": {
+        "enum": [
+          "accepted",
+          "queued",
+          "deferred",
+          "failed"
+        ],
+        "title": "AnalysisStatusValue",
+        "type": "string"
+      },
+      "Artifact": {
+        "properties": {
+          "byteSize": {
+            "exclusiveMinimum": 0,
+            "title": "Bytesize",
+            "type": "integer"
+          },
+          "objectKey": {
+            "pattern": "^organizations/[A-Za-z0-9_-]+/cases/[A-Za-z0-9_-]+/artifacts/[A-Za-z0-9_-]+\\.eml$",
+            "title": "Objectkey",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectKey",
+          "sha256",
+          "byteSize"
+        ],
+        "title": "Artifact",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "MailSentinel Analyzer",
+    "version": "prototype-1"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/health/live": {
+      "get": {
+        "operationId": "live_health_live_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Live Health Live Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Live"
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "operationId": "ready_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Ready Health Ready Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Ready"
+      }
+    },
+    "/v1/analyses": {
+      "post": {
+        "operationId": "intake_v1_analyses_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisIntakeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisIntakeAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Intake"
+      }
+    }
+  }
+}

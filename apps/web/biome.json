@@ -1,5 +1,16 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.3.8/schema.json",
 	"root": false,
-	"extends": ["@repo/biome-config/base", "@repo/biome-config/next-js"]
+	"files": {
+		"includes": ["**", "!.next", "!test-results", "!playwright-report"]
+	},
+	"extends": [
+		"@mailsentinel/biome-config/base",
+		"@mailsentinel/biome-config/next-js"
+	],
+	"css": {
+		"parser": {
+			"tailwindDirectives": true
+		}
+	}
 }
