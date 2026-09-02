@@ -26,3 +26,20 @@ def test_invalid_contract_examples() -> None:
     for name, model in MODELS.items():
         with pytest.raises(ValidationError):
             model.model_validate(examples[name])
+
+
+def test_artifact_key_must_match_request_scope() -> None:
+    with pytest.raises(ValidationError, match="does not match organization and case"):
+        AnalysisIntakeRequest.model_validate(
+            {
+                "caseId": "case_01",
+                "organizationId": "org_01",
+                "analysisRunId": "run_01",
+                "artifact": {
+                    "objectKey": "organizations/org_other/cases/case_01/artifacts/artifact_01.eml",
+                    "sha256": "a" * 64,
+                    "byteSize": 1,
+                },
+                "requestedAt": "2026-01-01T00:00:00Z",
+            }
+        )

@@ -39,16 +39,34 @@ export function assertEvidenceObjectKey(objectKey: string): void {
 		throw new Error("invalid evidence object key");
 }
 
+export function assertEvidenceObjectKeyForScope(
+	objectKey: string,
+	scope: { organizationId: string; caseId: string },
+): void {
+	assertEvidenceObjectKey(objectKey);
+	if (
+		!safeIdentifier.test(scope.organizationId) ||
+		!safeIdentifier.test(scope.caseId) ||
+		!objectKey.startsWith(
+			`organizations/${scope.organizationId}/cases/${scope.caseId}/artifacts/`,
+		)
+	) {
+		throw new Error("evidence object key is outside the requested scope");
+	}
+}
+
 export async function checkEvidenceStorage(): Promise<void> {
 	await evidenceStorage.send(new HeadBucketCommand({ Bucket: env.S3_BUCKET }));
 }
 
 export async function putEvidence(input: {
 	objectKey: string;
+	organizationId: string;
+	caseId: string;
 	body: Uint8Array;
 	sha256: string;
 }): Promise<void> {
-	assertEvidenceObjectKey(input.objectKey);
+	assertEvidenceObjectKeyForScope(input.objectKey, input);
 	if (!/^[0-9a-fA-F]{64}$/.test(input.sha256))
 		throw new Error("invalid evidence digest");
 	if (input.body.byteLength <= 0 || input.body.byteLength > env.MAX_EML_BYTES) {

@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 
@@ -49,6 +49,13 @@ class AnalysisIntakeRequest(ContractModel):
     analysis_run_id: str = Field(min_length=1)
     artifact: Artifact
     requested_at: datetime
+
+    @model_validator(mode="after")
+    def artifact_matches_scope(self) -> "AnalysisIntakeRequest":
+        expected_prefix = f"organizations/{self.organization_id}/cases/{self.case_id}/artifacts/"
+        if not self.artifact.object_key.startswith(expected_prefix):
+            raise ValueError("artifact object key does not match organization and case")
+        return self
 
 
 class AnalysisIntakeAccepted(ContractModel):

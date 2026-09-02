@@ -70,7 +70,8 @@ def ready() -> dict[str, str]:
     try:
         with psycopg.connect(str(settings.database_url), connect_timeout=2) as connection:
             connection.execute("select 1")
-        redis.from_url(str(settings.redis_url), socket_connect_timeout=2).ping()  # type: ignore[no-untyped-call]
+        with redis.from_url(str(settings.redis_url), socket_connect_timeout=2) as redis_client:  # type: ignore[no-untyped-call]
+            redis_client.ping()
         create_storage_client(settings).head_bucket(Bucket=settings.s3_bucket)
     except Exception as error:
         raise HTTPException(
