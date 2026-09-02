@@ -64,7 +64,7 @@ jobs:
       - name: Validate Compose configuration
         run: docker compose -f infra/compose.yaml config --quiet
       - name: Start private service stack
-        run: docker compose -f infra/compose.yaml up -d --build --wait
+        run: docker compose -f infra/compose.yaml up -d --build --wait postgres redis minio analyzer worker
       - name: Exercise protected intake and worker consumption
         run: |
           set -euo pipefail
