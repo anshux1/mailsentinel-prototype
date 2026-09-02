@@ -1,5 +1,16 @@
 import { relations } from "drizzle-orm";
-import { boolean, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+	boolean,
+	foreignKey,
+	index,
+	integer,
+	jsonb,
+	pgEnum,
+	pgTable,
+	text,
+	timestamp,
+	uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 const timestamps = {
 	createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -104,7 +115,10 @@ export const cases = pgTable(
 		title: text("title").notNull(),
 		...timestamps,
 	},
-	(table) => [index("cases_organization_idx").on(table.organizationId)],
+	(table) => [
+		uniqueIndex("cases_organization_id_uidx").on(table.organizationId, table.id),
+		index("cases_organization_idx").on(table.organizationId),
+	],
 );
 
 export const evidenceMetadata = pgTable(
@@ -123,7 +137,14 @@ export const evidenceMetadata = pgTable(
 		contentType: text("content_type").default("message/rfc822").notNull(),
 		...timestamps,
 	},
-	(table) => [index("evidence_org_case_idx").on(table.organizationId, table.caseId)],
+	(table) => [
+		foreignKey({
+			columns: [table.organizationId, table.caseId],
+			foreignColumns: [cases.organizationId, cases.id],
+			name: "evidence_metadata_org_case_fk",
+		}),
+		index("evidence_org_case_idx").on(table.organizationId, table.caseId),
+	],
 );
 
 export const analysisRuns = pgTable(
@@ -140,7 +161,14 @@ export const analysisRuns = pgTable(
 		failureCode: text("failure_code"),
 		...timestamps,
 	},
-	(table) => [index("analysis_runs_org_case_idx").on(table.organizationId, table.caseId)],
+	(table) => [
+		foreignKey({
+			columns: [table.organizationId, table.caseId],
+			foreignColumns: [cases.organizationId, cases.id],
+			name: "analysis_runs_org_case_fk",
+		}),
+		index("analysis_runs_org_case_idx").on(table.organizationId, table.caseId),
+	],
 );
 
 export const auditRecords = pgTable(
