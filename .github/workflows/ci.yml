@@ -40,6 +40,7 @@ jobs:
       - run: uv sync --locked
       - run: uv sync --locked
         working-directory: apps/analyzer
+      - run: pnpm env:check
       - run: pnpm db:migrate && pnpm db:seed
       - run: pnpm contracts:check
       - run: pnpm lint && pnpm typecheck && pnpm test
