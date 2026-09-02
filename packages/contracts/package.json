@@ -4,6 +4,7 @@
 	"type": "module",
 	"exports": {
 		".": "./src/index.ts",
+		"./analyzer-client": "./src/analyzer-client.ts",
 		"./generated/*": "./generated/*"
 	},
 	"scripts": {
@@ -16,6 +17,7 @@
 		"typescript": "5.9.2"
 	},
 	"dependencies": {
-		"openapi-fetch": "^0.17.0"
+		"openapi-fetch": "^0.17.0",
+		"server-only": "^0.0.1"
 	}
 }

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createAnalyzerClient } from "@mailsentinel/contracts";
+import { createAnalyzerClient } from "@mailsentinel/contracts/analyzer-client";
 import { env } from "@/env";
 
 /** Server-only client for the private FastAPI contract. */
