@@ -1,6 +1,6 @@
 import "server-only";
 
-import { cases, DrizzleCaseRepository } from "@mailsentinel/db";
+import { DrizzleCaseRepository } from "@mailsentinel/db";
 import { ORPCError, os } from "@orpc/server";
 import { z } from "zod";
 import { db } from "@/server/db";
@@ -63,16 +63,15 @@ export const router = {
 			.input(z.object({ title: z.string().min(1).max(160) }))
 			.output(caseShell)
 			.handler(async ({ context, input }) => {
-				const [created] = await db
-					.insert(cases)
-					.values({
-						id: `case_${crypto.randomUUID()}`,
+				const repository = new DrizzleCaseRepository(db);
+				try {
+					return await repository.createCase({
 						organizationId: context.organizationId,
 						title: input.title,
-					})
-					.returning();
-				if (!created) throw new ORPCError("INTERNAL_SERVER_ERROR");
-				return created;
+					});
+				} catch {
+					throw new ORPCError("INTERNAL_SERVER_ERROR");
+				}
 			}),
 	},
 	analysis: {

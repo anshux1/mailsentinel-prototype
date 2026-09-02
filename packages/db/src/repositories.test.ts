@@ -18,4 +18,11 @@ describe("tenant-scoped case repository", () => {
 		const result = await repository.listCases({ organizationId: "org_a" });
 		expect(result.map(({ id }) => id)).toEqual(["case_a"]);
 	});
+
+	it("creates a case with the supplied organization context", async () => {
+		const repository = new MemoryCaseRepository([...records]);
+		const created = await repository.createCase({ organizationId: "org_a", title: "New case" });
+		expect(created).toMatchObject({ organizationId: "org_a", title: "New case" });
+		await expect(repository.getCase({ organizationId: "org_b", caseId: created.id })).resolves.toBeNull();
+	});
 });
