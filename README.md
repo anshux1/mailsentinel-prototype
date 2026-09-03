@@ -198,6 +198,76 @@ This costs more than the free options but reduces operational risk. Confirm that
 - **Public demo with low traffic:** Vercel + Supabase + Upstash + R2, with analyzer/worker on an Oracle VM; understand that the analyzer boundary is weaker.
 - **Real evidence or investigative use:** private VM/VPC or paid managed services, encrypted backups, TLS, monitoring, and a continuously running worker.
 
+### If you do not have a credit card
+
+There is usually no completely free, no-card platform that provides all of these at the same time: a persistent Node server, a Python API, a permanent background worker, PostgreSQL, Redis, and private object storage. Free cloud plans commonly require a card, sleep when idle, restrict workers, or remove persistent storage.
+
+The most practical no-card option is:
+
+```text
+Your computer or an old home PC
+  └── Docker Compose: PostgreSQL + Redis + MinIO + analyzer + worker
+  └── Node.js: web process
+  └── Cloudflare Tunnel: exposes only web:3000
+Your domain ---------------------------> the tunnel URL
+```
+
+The computer must remain powered on and connected to the internet. This is suitable for a personal demo, not evidence that needs production availability.
+
+#### No-card local public demo
+
+1. Run the complete local stack as described in [Local development](#local-development).
+2. Install `cloudflared` from <https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/>.
+3. First test with a temporary URL:
+
+   ```bash
+   cloudflared tunnel --url http://localhost:3000
+   ```
+
+4. Open the generated HTTPS URL in a browser. This URL normally changes when the process stops, so it is not suitable for Gmail OAuth.
+5. For a stable URL, create a free Cloudflare account, add a domain you control, and create a named Tunnel. Configure its public hostname to forward only to:
+
+   ```text
+   http://localhost:3000
+   ```
+
+6. Set the public URL in the web environment:
+
+   ```dotenv
+   APP_ENV=production
+   BETTER_AUTH_URL=https://mail.example.com
+   GMAIL_REDIRECT_URI=https://mail.example.com/api/mailbox/gmail/callback
+   ```
+
+7. Register the exact Gmail callback URL in Google Cloud Console.
+8. Keep PostgreSQL, Redis, MinIO, port 8000, and the MinIO console off the tunnel. Only port 3000 should be forwarded.
+
+Cloudflare Tunnel avoids router port forwarding and can work without opening inbound firewall ports. Check the provider's current signup and free-plan requirements; policies can change.
+
+#### Using the cPanel subscription in a no-card setup
+
+Your cPanel account can still be useful for:
+
+- the domain and DNS;
+- the HTTPS certificate;
+- a landing page or static files;
+- the Next.js app, **only if** the host supports Node.js 22, persistent Node applications, SSH, and custom environment variables.
+
+It cannot normally replace PostgreSQL, Redis, the analyzer, and the worker. If cPanel does support Node.js, you may run `web` there and keep analyzer/worker on your home computer, but `ANALYZER_INTERNAL_URL` would then point to a protected HTTPS tunnel rather than `http://analyzer:8000`. That is less private than running all application processes together locally.
+
+Do not upload `infra/compose.yaml` to ordinary shared hosting and expect Docker to run. Shared cPanel hosting normally does not provide Docker or permanent worker processes.
+
+#### Other no-card services
+
+Some providers may allow free signup without a card, but they are useful only for individual components and their policies change:
+
+- Supabase or another free PostgreSQL provider for the database;
+- Upstash for a small Redis queue;
+- a provider's S3-compatible free storage, if available;
+- Render/Koyeb/Hugging Face for an analyzer demo, accepting sleep and public-endpoint limitations.
+
+These do not reliably solve the permanent Dramatiq worker requirement. For a complete no-card setup, local Docker Compose is the safest starting point.
+
 ---
 
 ## Prerequisites
