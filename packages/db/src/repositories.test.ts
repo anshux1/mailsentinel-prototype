@@ -8,6 +8,8 @@ import {
 	createEvidenceWithRunAndAudit,
 	createMemoryRepositories,
 	DependencyError,
+	decodeCursor,
+	encodeCursor,
 	InvalidStateError,
 	MemoryCaseRepository,
 	mapDatabaseError,
@@ -1213,5 +1215,95 @@ describe("canonicalJsonStringify and deterministic deep equality", () => {
 		expect(areAnalysisResultsIdentical(baseRun, { ...inputSame, resultSnapshot: { indicators: ["other"] } })).toBe(
 			false,
 		);
+	});
+});
+
+describe("cursor pagination & stable tie-breaking in repositories (Memory)", () => {
+	it("encodes and decodes cursors with ISO dates and ids", () => {
+		const d = new Date("2026-09-01T12:34:56.789Z");
+		const encoded = encodeCursor(d, "rec_123");
+		const decoded = decodeCursor(encoded);
+		expect(decoded).not.toBeNull();
+		expect(decoded?.createdAt.toISOString()).toBe("2026-09-01T12:34:56.789Z");
+		expect(decoded?.id).toBe("rec_123");
+
+		expect(decodeCursor("invalid_base64_json")).toBeNull();
+	});
+
+	it("listCases applies cursor filtering and stable tie-breaking on identical timestamps", async () => {
+		const d1 = new Date("2026-09-01T10:00:00Z");
+		const d2 = new Date("2026-09-01T11:00:00Z");
+		const d3 = new Date("2026-09-01T11:00:00Z"); // same timestamp as d2
+
+		const caseRepo = new MemoryCaseRepository([
+			{ id: "case_01", organizationId: "org_x", title: "C1", createdAt: d1, updatedAt: d1 },
+			{ id: "case_02", organizationId: "org_x", title: "C2", createdAt: d2, updatedAt: d2 },
+			{ id: "case_03", organizationId: "org_x", title: "C3", createdAt: d3, updatedAt: d3 },
+		]);
+
+		// Ordered: case_03 (11:00, id: case_03), case_02 (11:00, id: case_02), case_01 (10:00, id: case_01)
+		const page1 = await caseRepo.listCases({ organizationId: "org_x", limit: 1 });
+		expect(page1).toHaveLength(1);
+		expect(page1[0]?.id).toBe("case_03");
+
+		const cursor1 = encodeCursor(page1[0]!.createdAt, page1[0]!.id);
+		const page2 = await caseRepo.listCases({ organizationId: "org_x", limit: 1, cursor: cursor1 });
+		expect(page2).toHaveLength(1);
+		expect(page2[0]?.id).toBe("case_02");
+
+		const cursor2 = encodeCursor(page2[0]!.createdAt, page2[0]!.id);
+		const page3 = await caseRepo.listCases({ organizationId: "org_x", limit: 1, cursor: cursor2 });
+		expect(page3).toHaveLength(1);
+		expect(page3[0]?.id).toBe("case_01");
+
+		const cursor3 = encodeCursor(page3[0]!.createdAt, page3[0]!.id);
+		const page4 = await caseRepo.listCases({ organizationId: "org_x", limit: 1, cursor: cursor3 });
+		expect(page4).toHaveLength(0);
+	});
+
+	it("listReports applies cursor filtering and stable tie-breaking", async () => {
+		const repos = createMemoryRepositories({
+			reports: [
+				{
+					id: "rep_1",
+					organizationId: "org_x",
+					caseId: "case_1",
+					analysisRunId: "run_1",
+					version: 1,
+					status: "completed",
+					format: "json",
+					objectKey: null,
+					metadata: {},
+					failureReason: null,
+					generatedAt: null,
+					createdAt: new Date("2026-09-01T10:00:00Z"),
+					updatedAt: new Date("2026-09-01T10:00:00Z"),
+				},
+				{
+					id: "rep_2",
+					organizationId: "org_x",
+					caseId: "case_1",
+					analysisRunId: "run_2",
+					version: 1,
+					status: "completed",
+					format: "json",
+					objectKey: null,
+					metadata: {},
+					failureReason: null,
+					generatedAt: null,
+					createdAt: new Date("2026-09-01T11:00:00Z"),
+					updatedAt: new Date("2026-09-01T11:00:00Z"),
+				},
+			],
+		});
+
+		const page1 = await repos.reports.listReports({ organizationId: "org_x", limit: 1 });
+		expect(page1).toHaveLength(1);
+		expect(page1[0]?.id).toBe("rep_2");
+
+		const cursor = encodeCursor(page1[0]!.createdAt, page1[0]!.id);
+		const page2 = await repos.reports.listReports({ organizationId: "org_x", limit: 1, cursor });
+		expect(page2).toHaveLength(1);
+		expect(page2[0]?.id).toBe("rep_1");
 	});
 });

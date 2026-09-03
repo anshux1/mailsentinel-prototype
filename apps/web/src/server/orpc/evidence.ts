@@ -6,7 +6,9 @@ import {
 	DrizzleAuditRepository,
 	DrizzleCaseRepository,
 	DrizzleEvidenceRepository,
+	decodeCursor,
 	type EvidenceShell,
+	encodeCursor,
 } from "@mailsentinel/db";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
@@ -194,7 +196,16 @@ export const listEvidenceInput = z.object({
 	caseId: z.string().min(1, "Case ID is required"),
 	status: z.enum(["pending", "stored", "verified", "failed"]).optional(),
 	limit: z.number().int().min(1).max(100).default(50).optional(),
-	offset: z.number().int().min(0).default(0).optional(),
+	cursor: z
+		.string()
+		.max(1024)
+		.refine((value) => decodeCursor(value) !== null, "Invalid cursor")
+		.optional(),
+});
+
+export const listEvidenceOutputSchema = z.object({
+	items: z.array(evidenceOutputSchema),
+	nextCursor: z.string().nullable(),
 });
 
 export const getEvidenceInput = z.object({
@@ -554,7 +565,7 @@ export const evidenceRouter = {
 
 	list: viewerProcedure
 		.input(listEvidenceInput)
-		.output(z.array(evidenceOutputSchema))
+		.output(listEvidenceOutputSchema)
 		.handler(async ({ context, input }) => {
 			const caseRepo = context.repos?.cases ?? new DrizzleCaseRepository(db);
 			const caseRecord = await caseRepo.getCase({
@@ -565,16 +576,24 @@ export const evidenceRouter = {
 				throw new NotFoundError("Case not found");
 			}
 
+			const limit = input.limit ?? 50;
 			const evidenceRepo =
 				context.repos?.evidence ?? new DrizzleEvidenceRepository(db);
 			const records = await evidenceRepo.listEvidence({
 				organizationId: context.organizationId,
 				caseId: input.caseId,
 				status: input.status,
-				limit: input.limit,
-				offset: input.offset,
+				limit: limit + 1,
+				cursor: input.cursor,
 			});
-			return records.map(toEvidenceOutput);
+			const hasMore = records.length > limit;
+			const page = hasMore ? records.slice(0, limit) : records;
+			const last = page.at(-1);
+			return {
+				items: page.map(toEvidenceOutput),
+				nextCursor:
+					hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
+			};
 		}),
 
 	get: viewerProcedure

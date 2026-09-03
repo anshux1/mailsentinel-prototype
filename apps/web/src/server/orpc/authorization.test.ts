@@ -426,8 +426,8 @@ describe("Phase S3: Authorization Model & Infrastructure", () => {
 			const client = createRouterClient(router, { context });
 
 			const list = await client.case.list();
-			expect(list).toHaveLength(1);
-			expect(list[0]?.id).toBe("case_tenant_1");
+			expect(list.items).toHaveLength(1);
+			expect(list.items[0]?.id).toBe("case_tenant_1");
 
 			const single = await client.case.get({ caseId: "case_tenant_1" });
 			expect(single?.id).toBe("case_tenant_1");
@@ -552,8 +552,12 @@ describe("Phase S3: Authorization Model & Infrastructure", () => {
 			const client = createRouterClient(router, { context });
 
 			const cases = await client.case.list();
-			expect(cases.every((c) => c.organizationId === "org_alpha")).toBe(true);
-			expect(cases.some((c) => c.organizationId === "org_beta")).toBe(false);
+			expect(cases.items.every((c) => c.organizationId === "org_alpha")).toBe(
+				true,
+			);
+			expect(cases.items.some((c) => c.organizationId === "org_beta")).toBe(
+				false,
+			);
 		});
 	});
 

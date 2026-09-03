@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
@@ -74,6 +74,32 @@ export function areAnalysisResultsIdentical(
 	return canonicalJsonStringify(existing.resultSnapshot) === canonicalJsonStringify(input.resultSnapshot);
 }
 
+export function encodeCursor(createdAt: Date | string, id: string): string {
+	const iso = typeof createdAt === "string" ? createdAt : createdAt.toISOString();
+	return Buffer.from(JSON.stringify({ createdAt: iso, id })).toString("base64url");
+}
+
+export function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
+	try {
+		if (cursor.length === 0 || cursor.length > 1024) return null;
+		const raw = Buffer.from(cursor, "base64url").toString("utf8");
+		const parsed: unknown = JSON.parse(raw);
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+		const value = parsed as Record<string, unknown>;
+		if (
+			typeof value.createdAt === "string" &&
+			typeof value.id === "string" &&
+			/^[A-Za-z0-9_-]{1,200}$/.test(value.id)
+		) {
+			const createdAt = new Date(value.createdAt);
+			if (!Number.isNaN(createdAt.getTime())) return { createdAt, id: value.id };
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: Drizzle supports both root database and transaction instances
 export type DrizzleClient = PgDatabase<any, typeof schema, any> | PostgresJsDatabase<typeof schema>;
 
@@ -95,6 +121,12 @@ export type ReportStatus = (typeof schema.reportStatus.enumValues)[number];
 export type ReportFormat = (typeof schema.reportFormat.enumValues)[number];
 
 export type CreateCaseInput = TenantContext & { title: string; id?: string };
+
+export interface ListCasesInput extends TenantContext {
+	limit?: number;
+	offset?: number;
+	cursor?: string | null;
+}
 
 export interface CreatePendingEvidenceInput extends TenantCaseKey {
 	id?: string;
@@ -135,6 +167,7 @@ export interface ListEvidenceInput extends TenantCaseKey {
 	status?: EvidenceStatus;
 	limit?: number;
 	offset?: number;
+	cursor?: string | null;
 }
 
 export interface CreateAnalysisRunInput extends TenantCaseKey {
@@ -158,6 +191,7 @@ export interface ListAnalysisRunsInput extends TenantContext {
 	verdict?: AnalysisVerdict;
 	limit?: number;
 	offset?: number;
+	cursor?: string | null;
 }
 
 export interface GetAnalysisStatusInput extends TenantContext {
@@ -255,6 +289,7 @@ export interface ListReportsInput extends TenantContext {
 	status?: ReportStatus;
 	limit?: number;
 	offset?: number;
+	cursor?: string | null;
 }
 
 export interface UpdateReportStatusInput extends TenantContext {
@@ -292,7 +327,7 @@ export interface MembershipRepository {
 }
 
 export interface CaseRepository {
-	listCases(input: TenantContext): Promise<CaseShell[]>;
+	listCases(input: ListCasesInput): Promise<CaseShell[]>;
 	getCase(input: TenantCaseKey): Promise<CaseShell | null>;
 	createCase(input: CreateCaseInput): Promise<CaseShell>;
 }
@@ -378,14 +413,33 @@ export class DrizzleMembershipRepository implements MembershipRepository {
 export class DrizzleCaseRepository implements CaseRepository {
 	constructor(private readonly db: DrizzleClient) {}
 
-	async listCases({ organizationId }: TenantContext): Promise<CaseShell[]> {
-		assertOrganizationId(organizationId);
+	async listCases(input: ListCasesInput): Promise<CaseShell[]> {
+		assertOrganizationId(input.organizationId);
 		try {
-			return await this.db
+			const conditions = [eq(schema.cases.organizationId, input.organizationId)];
+			if (input.cursor) {
+				const decoded = decodeCursor(input.cursor);
+				if (decoded) {
+					conditions.push(
+						// biome-ignore lint/style/noNonNullAssertion: or() has two concrete predicates here
+						or(
+							lt(schema.cases.createdAt, decoded.createdAt),
+							and(eq(schema.cases.createdAt, decoded.createdAt), lt(schema.cases.id, decoded.id)),
+						)!,
+					);
+				}
+			}
+
+			let query = this.db
 				.select()
 				.from(schema.cases)
-				.where(eq(schema.cases.organizationId, organizationId))
-				.orderBy(desc(schema.cases.createdAt));
+				.where(and(...conditions))
+				.orderBy(desc(schema.cases.createdAt), desc(schema.cases.id));
+
+			if (input.limit !== undefined) query = query.limit(input.limit) as typeof query;
+			if (input.offset !== undefined) query = query.offset(input.offset) as typeof query;
+
+			return await query;
 		} catch (err) {
 			mapDatabaseError(err, "listCases");
 		}
@@ -720,11 +774,23 @@ export class DrizzleEvidenceRepository implements EvidenceRepository {
 			if (input.status) {
 				conditions.push(eq(schema.evidenceMetadata.status, input.status));
 			}
+			if (input.cursor) {
+				const decoded = decodeCursor(input.cursor);
+				if (decoded) {
+					conditions.push(
+						// biome-ignore lint/style/noNonNullAssertion: or() has two concrete predicates here
+						or(
+							lt(schema.evidenceMetadata.createdAt, decoded.createdAt),
+							and(eq(schema.evidenceMetadata.createdAt, decoded.createdAt), lt(schema.evidenceMetadata.id, decoded.id)),
+						)!,
+					);
+				}
+			}
 			let query = this.db
 				.select()
 				.from(schema.evidenceMetadata)
 				.where(and(...conditions))
-				.orderBy(desc(schema.evidenceMetadata.createdAt));
+				.orderBy(desc(schema.evidenceMetadata.createdAt), desc(schema.evidenceMetadata.id));
 
 			if (input.limit !== undefined) {
 				query = query.limit(input.limit) as typeof query;
@@ -804,12 +870,24 @@ export class DrizzleAnalysisRunRepository implements AnalysisRunRepository {
 			if (input.evidenceId) conditions.push(eq(schema.analysisRuns.evidenceId, input.evidenceId));
 			if (input.status) conditions.push(eq(schema.analysisRuns.status, input.status));
 			if (input.verdict) conditions.push(eq(schema.analysisRuns.verdict, input.verdict));
+			if (input.cursor) {
+				const decoded = decodeCursor(input.cursor);
+				if (decoded) {
+					conditions.push(
+						// biome-ignore lint/style/noNonNullAssertion: or() has two concrete predicates here
+						or(
+							lt(schema.analysisRuns.createdAt, decoded.createdAt),
+							and(eq(schema.analysisRuns.createdAt, decoded.createdAt), lt(schema.analysisRuns.id, decoded.id)),
+						)!,
+					);
+				}
+			}
 
 			let query = this.db
 				.select()
 				.from(schema.analysisRuns)
 				.where(and(...conditions))
-				.orderBy(desc(schema.analysisRuns.createdAt));
+				.orderBy(desc(schema.analysisRuns.createdAt), desc(schema.analysisRuns.id));
 
 			if (input.limit !== undefined) query = query.limit(input.limit) as typeof query;
 			if (input.offset !== undefined) query = query.offset(input.offset) as typeof query;
@@ -1148,12 +1226,24 @@ export class DrizzleReportRepository implements ReportRepository {
 			if (input.analysisRunId) conditions.push(eq(schema.reports.analysisRunId, input.analysisRunId));
 			if (input.format) conditions.push(eq(schema.reports.format, input.format));
 			if (input.status) conditions.push(eq(schema.reports.status, input.status));
+			if (input.cursor) {
+				const decoded = decodeCursor(input.cursor);
+				if (decoded) {
+					conditions.push(
+						// biome-ignore lint/style/noNonNullAssertion: or() has two concrete predicates here
+						or(
+							lt(schema.reports.createdAt, decoded.createdAt),
+							and(eq(schema.reports.createdAt, decoded.createdAt), lt(schema.reports.id, decoded.id)),
+						)!,
+					);
+				}
+			}
 
 			let query = this.db
 				.select()
 				.from(schema.reports)
 				.where(and(...conditions))
-				.orderBy(desc(schema.reports.createdAt));
+				.orderBy(desc(schema.reports.createdAt), desc(schema.reports.id));
 
 			if (input.limit !== undefined) query = query.limit(input.limit) as typeof query;
 			if (input.offset !== undefined) query = query.offset(input.offset) as typeof query;
@@ -1288,11 +1378,29 @@ export class MemoryMembershipRepository implements MembershipRepository {
 export class MemoryCaseRepository implements CaseRepository {
 	constructor(private readonly records: CaseShell[]) {}
 
-	async listCases({ organizationId }: TenantContext): Promise<CaseShell[]> {
-		assertOrganizationId(organizationId);
-		return this.records
-			.filter((record) => record.organizationId === organizationId)
-			.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+	async listCases(input: ListCasesInput): Promise<CaseShell[]> {
+		assertOrganizationId(input.organizationId);
+		let list = this.records.filter((record) => record.organizationId === input.organizationId);
+		if (input.cursor) {
+			const decoded = decodeCursor(input.cursor);
+			if (decoded) {
+				list = list.filter((r) => {
+					const rTime = r.createdAt.getTime();
+					const cTime = decoded.createdAt.getTime();
+					if (rTime < cTime) return true;
+					if (rTime === cTime && r.id < decoded.id) return true;
+					return false;
+				});
+			}
+		}
+		list.sort((a, b) => {
+			const diff = b.createdAt.getTime() - a.createdAt.getTime();
+			if (diff !== 0) return diff;
+			return b.id.localeCompare(a.id);
+		});
+		if (input.offset !== undefined) list = list.slice(input.offset);
+		if (input.limit !== undefined) list = list.slice(0, input.limit);
+		return list.map((record) => ({ ...record }));
 	}
 
 	async getCase({ organizationId, caseId }: TenantCaseKey): Promise<CaseShell | null> {
@@ -1493,14 +1601,31 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 
 	async listEvidence(input: ListEvidenceInput): Promise<EvidenceShell[]> {
 		assertOrganizationId(input.organizationId);
-		let list = this.records
-			.filter(
-				(e) =>
-					e.organizationId === input.organizationId &&
-					e.caseId === input.caseId &&
-					(!input.status || e.status === input.status),
-			)
-			.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+		let list = this.records.filter(
+			(e) =>
+				e.organizationId === input.organizationId &&
+				e.caseId === input.caseId &&
+				(!input.status || e.status === input.status),
+		);
+
+		if (input.cursor) {
+			const decoded = decodeCursor(input.cursor);
+			if (decoded) {
+				list = list.filter((e) => {
+					const eTime = e.createdAt.getTime();
+					const cTime = decoded.createdAt.getTime();
+					if (eTime < cTime) return true;
+					if (eTime === cTime && e.id < decoded.id) return true;
+					return false;
+				});
+			}
+		}
+
+		list.sort((a, b) => {
+			const diff = b.createdAt.getTime() - a.createdAt.getTime();
+			if (diff !== 0) return diff;
+			return b.id.localeCompare(a.id);
+		});
 
 		if (input.offset !== undefined) list = list.slice(input.offset);
 		if (input.limit !== undefined) list = list.slice(0, input.limit);
@@ -1597,16 +1722,33 @@ export class MemoryAnalysisRunRepository implements AnalysisRunRepository {
 
 	async listAnalysisRuns(input: ListAnalysisRunsInput): Promise<AnalysisRunShell[]> {
 		assertOrganizationId(input.organizationId);
-		let list = this.records
-			.filter((r) => {
-				if (r.organizationId !== input.organizationId) return false;
-				if (input.caseId && r.caseId !== input.caseId) return false;
-				if (input.evidenceId && r.evidenceId !== input.evidenceId) return false;
-				if (input.status && r.status !== input.status) return false;
-				if (input.verdict && r.verdict !== input.verdict) return false;
-				return true;
-			})
-			.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+		let list = this.records.filter((r) => {
+			if (r.organizationId !== input.organizationId) return false;
+			if (input.caseId && r.caseId !== input.caseId) return false;
+			if (input.evidenceId && r.evidenceId !== input.evidenceId) return false;
+			if (input.status && r.status !== input.status) return false;
+			if (input.verdict && r.verdict !== input.verdict) return false;
+			return true;
+		});
+
+		if (input.cursor) {
+			const decoded = decodeCursor(input.cursor);
+			if (decoded) {
+				list = list.filter((r) => {
+					const rTime = r.createdAt.getTime();
+					const cTime = decoded.createdAt.getTime();
+					if (rTime < cTime) return true;
+					if (rTime === cTime && r.id < decoded.id) return true;
+					return false;
+				});
+			}
+		}
+
+		list.sort((a, b) => {
+			const diff = b.createdAt.getTime() - a.createdAt.getTime();
+			if (diff !== 0) return diff;
+			return b.id.localeCompare(a.id);
+		});
 
 		if (input.offset !== undefined) list = list.slice(input.offset);
 		if (input.limit !== undefined) list = list.slice(0, input.limit);
@@ -1881,16 +2023,33 @@ export class MemoryReportRepository implements ReportRepository {
 
 	async listReports(input: ListReportsInput): Promise<ReportShell[]> {
 		assertOrganizationId(input.organizationId);
-		let list = this.records
-			.filter((r) => {
-				if (r.organizationId !== input.organizationId) return false;
-				if (input.caseId && r.caseId !== input.caseId) return false;
-				if (input.analysisRunId && r.analysisRunId !== input.analysisRunId) return false;
-				if (input.format && r.format !== input.format) return false;
-				if (input.status && r.status !== input.status) return false;
-				return true;
-			})
-			.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+		let list = this.records.filter((r) => {
+			if (r.organizationId !== input.organizationId) return false;
+			if (input.caseId && r.caseId !== input.caseId) return false;
+			if (input.analysisRunId && r.analysisRunId !== input.analysisRunId) return false;
+			if (input.format && r.format !== input.format) return false;
+			if (input.status && r.status !== input.status) return false;
+			return true;
+		});
+
+		if (input.cursor) {
+			const decoded = decodeCursor(input.cursor);
+			if (decoded) {
+				list = list.filter((r) => {
+					const rTime = r.createdAt.getTime();
+					const cTime = decoded.createdAt.getTime();
+					if (rTime < cTime) return true;
+					if (rTime === cTime && r.id < decoded.id) return true;
+					return false;
+				});
+			}
+		}
+
+		list.sort((a, b) => {
+			const diff = b.createdAt.getTime() - a.createdAt.getTime();
+			if (diff !== 0) return diff;
+			return b.id.localeCompare(a.id);
+		});
 
 		if (input.offset !== undefined) list = list.slice(input.offset);
 		if (input.limit !== undefined) list = list.slice(0, input.limit);

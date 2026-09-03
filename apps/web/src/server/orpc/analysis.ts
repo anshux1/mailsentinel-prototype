@@ -10,6 +10,8 @@ import {
 	DrizzleAuditRepository,
 	DrizzleCaseRepository,
 	DrizzleEvidenceRepository,
+	decodeCursor,
+	encodeCursor,
 	executeTransaction,
 } from "@mailsentinel/db";
 import { z } from "zod";
@@ -22,6 +24,11 @@ import {
 } from "@/server/analyzer-client";
 import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
+import {
+	analysisResultOutputSchema,
+	analysisStatusOutputSchema,
+	formatCompletedAnalysisResult,
+} from "./analysis-schemas";
 import type { RpcContext, TransactionExecutor } from "./context";
 import { ConflictError, DependencyError, NotFoundError } from "./errors";
 import {
@@ -102,6 +109,43 @@ export function toAnalysisRunOutput(
 	};
 }
 
+export const listAnalysisRunsInput = z.object({
+	caseId: z.string().min(1, "Case ID is required").optional(),
+	evidenceId: z.string().min(1, "Evidence ID is required").optional(),
+	status: z
+		.enum([
+			"accepted",
+			"queued",
+			"processing",
+			"completed",
+			"deferred",
+			"failed",
+		])
+		.optional(),
+	verdict: z.enum(["unknown", "benign", "suspicious", "malicious"]).optional(),
+	limit: z.number().int().min(1).max(100).default(50).optional(),
+	cursor: z
+		.string()
+		.max(1024)
+		.refine((value) => decodeCursor(value) !== null, "Invalid cursor")
+		.optional(),
+});
+
+export const listAnalysisRunsOutputSchema = z.object({
+	items: z.array(analysisRunOutputSchema),
+	nextCursor: z.string().nullable(),
+});
+
+export const getAnalysisStatusInput = z.object({
+	analysisRunId: z.string().min(1, "Analysis run ID is required"),
+	caseId: z.string().min(1, "Case ID is required").optional(),
+});
+
+export const getAnalysisResultInput = z.object({
+	analysisRunId: z.string().min(1, "Analysis run ID is required"),
+	caseId: z.string().min(1, "Case ID is required").optional(),
+});
+
 function getTxExecutor(context: RpcContext): TransactionExecutor {
 	if (context.executeTx) {
 		return context.executeTx;
@@ -166,11 +210,6 @@ async function reconcileDispatchedRun(
 
 	return canonicalRun;
 }
-
-const deferred = z.object({
-	status: z.literal("deferred"),
-	reason: z.string(),
-});
 
 export const analysisRouter = {
 	start: investigatorProcedure
@@ -635,11 +674,121 @@ export const analysisRouter = {
 			return toAnalysisRunOutput(finalRun);
 		}),
 
+	list: viewerProcedure
+		.input(listAnalysisRunsInput)
+		.output(listAnalysisRunsOutputSchema)
+		.handler(async ({ context, input }) => {
+			const boundedLimit = Math.min(input.limit ?? 50, 100);
+			const analysisRepo =
+				context.repos?.analysisRuns ?? new DrizzleAnalysisRunRepository(db);
+			const records = await analysisRepo.listAnalysisRuns({
+				organizationId: context.organizationId,
+				caseId: input.caseId,
+				evidenceId: input.evidenceId,
+				status: input.status,
+				verdict: input.verdict,
+				limit: boundedLimit + 1,
+				cursor: input.cursor,
+			});
+
+			const hasMore = records.length > boundedLimit;
+			const items = hasMore ? records.slice(0, boundedLimit) : records;
+			const lastItem = items[items.length - 1];
+			const nextCursor =
+				hasMore && lastItem
+					? encodeCursor(lastItem.createdAt, lastItem.id)
+					: null;
+
+			return {
+				items: items.map(toAnalysisRunOutput),
+				nextCursor,
+			};
+		}),
+
 	getStatus: viewerProcedure
-		.input(z.object({ analysisRunId: z.string().min(1) }))
-		.output(deferred)
-		.handler(() => ({
-			status: "deferred",
-			reason: "No analysis has been started",
-		})),
+		.input(getAnalysisStatusInput)
+		.output(analysisStatusOutputSchema)
+		.handler(async ({ context, input }) => {
+			const analysisRepo =
+				context.repos?.analysisRuns ?? new DrizzleAnalysisRunRepository(db);
+			const status = await analysisRepo.getAnalysisStatus({
+				organizationId: context.organizationId,
+				analysisRunId: input.analysisRunId,
+			});
+			if (!status) {
+				throw new NotFoundError("Analysis run not found");
+			}
+			if (input.caseId && status.caseId !== input.caseId) {
+				throw new NotFoundError("Analysis run not found");
+			}
+
+			const failure = status.failureCode
+				? {
+						code: status.failureCode,
+						message: status.failureMessage ?? "Analysis run failed",
+						retryable: status.retryable,
+						requestId: null,
+					}
+				: null;
+
+			return {
+				id: status.id,
+				analysisRunId: status.id,
+				organizationId: status.organizationId,
+				caseId: status.caseId,
+				status: status.status,
+				phase: status.phase ?? null,
+				progress: status.progress ?? null,
+				failureCode: status.failureCode ?? null,
+				failureMessage: status.failureMessage ?? null,
+				retryable: status.retryable,
+				attempts: status.attempts,
+				queuedAt: status.queuedAt ?? null,
+				startedAt: status.startedAt ?? null,
+				completedAt: status.completedAt ?? null,
+				failedAt: status.failedAt ?? null,
+				updatedAt: status.updatedAt,
+				failure,
+			};
+		}),
+
+	getResult: viewerProcedure
+		.input(getAnalysisResultInput)
+		.output(analysisResultOutputSchema)
+		.handler(async ({ context, input }) => {
+			const analysisRepo =
+				context.repos?.analysisRuns ?? new DrizzleAnalysisRunRepository(db);
+			const run = await analysisRepo.getAnalysisRun({
+				organizationId: context.organizationId,
+				analysisRunId: input.analysisRunId,
+				caseId: input.caseId,
+			});
+			if (!run) {
+				throw new NotFoundError("Analysis run not found");
+			}
+
+			if (run.status !== "completed") {
+				return {
+					ready: false as const,
+					status: run.status,
+					analysisRunId: run.id,
+					organizationId: run.organizationId,
+					caseId: run.caseId,
+					phase: run.phase ?? null,
+					progress: run.progress ?? null,
+					failureCode: run.failureCode ?? null,
+					failureMessage: run.failureMessage ?? null,
+					retryable: run.retryable,
+					attempts: run.attempts,
+					queuedAt: run.queuedAt ?? null,
+					startedAt: run.startedAt ?? null,
+					failedAt: run.failedAt ?? null,
+					updatedAt: run.updatedAt,
+					createdAt: run.createdAt,
+				};
+			}
+
+			const snapshot = (run.resultSnapshot as Record<string, unknown>) ?? {};
+			return formatCompletedAnalysisResult(run, snapshot);
+		}),
 };

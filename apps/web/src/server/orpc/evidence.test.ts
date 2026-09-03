@@ -205,11 +205,11 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			const list = await client.evidence.list({
 				caseId: "case_alpha_1",
 			});
-			expect(list).toHaveLength(1);
-			expect(list[0]?.id).toBe(pending.id);
-			expect(list[0]?.status).toBe("verified");
-			expect(list[0]).not.toHaveProperty("objectKey");
-			expect(list[0]).not.toHaveProperty("idempotencyKey");
+			expect(list.items).toHaveLength(1);
+			expect(list.items[0]?.id).toBe(pending.id);
+			expect(list.items[0]?.status).toBe("verified");
+			expect(list.items[0]).not.toHaveProperty("objectKey");
+			expect(list.items[0]).not.toHaveProperty("idempotencyKey");
 
 			// Step 4: Viewer can get evidence
 			const single = await client.evidence.get({
@@ -744,8 +744,8 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			const list = await viewerClient.evidence.list({
 				caseId: "case_alpha_1",
 			});
-			expect(list).toHaveLength(1);
-			expect(list[0]?.id).toBe(pending.id);
+			expect(list.items).toHaveLength(1);
+			expect(list.items[0]?.id).toBe(pending.id);
 
 			const single = await viewerClient.evidence.get({
 				caseId: "case_alpha_1",
@@ -1063,8 +1063,8 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 				expect(completed).not.toHaveProperty("idempotencyKey");
 
 				const list = await client.evidence.list({ caseId: "case_alpha_1" });
-				expect(list[0]).not.toHaveProperty("objectKey");
-				expect(list[0]).not.toHaveProperty("idempotencyKey");
+				expect(list.items[0]).not.toHaveProperty("objectKey");
+				expect(list.items[0]).not.toHaveProperty("idempotencyKey");
 
 				const single = await client.evidence.get({
 					caseId: "case_alpha_1",

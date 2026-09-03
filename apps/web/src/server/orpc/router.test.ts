@@ -55,8 +55,8 @@ describe("application router", () => {
 		const client = createRouterClient(router, { context: viewerContext });
 
 		const list = await client.case.list();
-		expect(list).toHaveLength(1);
-		expect(list[0]?.id).toBe("case_01");
+		expect(list.items).toHaveLength(1);
+		expect(list.items[0]?.id).toBe("case_01");
 
 		const single = await client.case.get({ caseId: "case_01" });
 		expect(single?.id).toBe("case_01");
@@ -211,10 +211,10 @@ describe("application router", () => {
 		});
 
 		const list = await viewerClient.evidence.list({ caseId: "case_01" });
-		expect(list).toHaveLength(1);
-		expect(list[0]?.id).toBe(pending.id);
-		expect(list[0]).not.toHaveProperty("objectKey");
-		expect(list[0]).not.toHaveProperty("idempotencyKey");
+		expect(list.items).toHaveLength(1);
+		expect(list.items[0]?.id).toBe(pending.id);
+		expect(list.items[0]).not.toHaveProperty("objectKey");
+		expect(list.items[0]).not.toHaveProperty("idempotencyKey");
 
 		const single = await viewerClient.evidence.get({
 			caseId: "case_01",
