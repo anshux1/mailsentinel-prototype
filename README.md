@@ -171,6 +171,7 @@ If you are actively developing frontend or Python code and prefer running servic
 
 ## Documentation
 
+- [`SIH_README.md`](SIH_README.md) — Detailed SIH judge Q&A, three-minute pitch, impact, feasibility, testing, limitations, and demo script.
 - [`docs/LOCAL_DOCKER_INTERNET.md`](docs/LOCAL_DOCKER_INTERNET.md) — Comprehensive guide for local Docker Compose and Cloudflare Tunnel internet exposure.
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — Production architecture, topologies, and infrastructure notes.
 - [`docs/threat-model.md`](docs/threat-model.md) — Security boundaries, authorization model, and threat considerations.
