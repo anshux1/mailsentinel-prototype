@@ -24,6 +24,7 @@ import {
 } from "@/server/analyzer-client";
 import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 import {
 	analysisResultOutputSchema,
 	analysisStatusOutputSchema,
@@ -37,10 +38,16 @@ import {
 	viewerProcedure,
 } from "./middleware";
 
+const identifierSchema = z
+	.string()
+	.min(1)
+	.max(200)
+	.regex(/^[A-Za-z0-9_-]+$/);
+
 export const startAnalysisInput = z
 	.object({
-		caseId: z.string().min(1, "Case ID is required"),
-		evidenceId: z.string().min(1, "Evidence ID is required"),
+		caseId: identifierSchema,
+		evidenceId: identifierSchema,
 		idempotencyKey: z
 			.string()
 			.min(1, "Idempotency key must not be empty")
@@ -51,8 +58,8 @@ export const startAnalysisInput = z
 
 export const retryAnalysisInput = z
 	.object({
-		analysisRunId: z.string().min(1, "Analysis run ID is required"),
-		caseId: z.string().min(1, "Case ID is required").optional(),
+		analysisRunId: identifierSchema,
+		caseId: identifierSchema.optional(),
 	})
 	.strict();
 
@@ -110,8 +117,8 @@ export function toAnalysisRunOutput(
 }
 
 export const listAnalysisRunsInput = z.object({
-	caseId: z.string().min(1, "Case ID is required").optional(),
-	evidenceId: z.string().min(1, "Evidence ID is required").optional(),
+	caseId: identifierSchema.optional(),
+	evidenceId: identifierSchema.optional(),
 	status: z
 		.enum([
 			"accepted",
@@ -137,13 +144,13 @@ export const listAnalysisRunsOutputSchema = z.object({
 });
 
 export const getAnalysisStatusInput = z.object({
-	analysisRunId: z.string().min(1, "Analysis run ID is required"),
-	caseId: z.string().min(1, "Case ID is required").optional(),
+	analysisRunId: identifierSchema,
+	caseId: identifierSchema.optional(),
 });
 
 export const getAnalysisResultInput = z.object({
-	analysisRunId: z.string().min(1, "Analysis run ID is required"),
-	caseId: z.string().min(1, "Case ID is required").optional(),
+	analysisRunId: identifierSchema,
+	caseId: identifierSchema.optional(),
 });
 
 function getTxExecutor(context: RpcContext): TransactionExecutor {
@@ -463,6 +470,13 @@ export const analysisRouter = {
 					status: finalRun.status,
 				},
 			});
+			logger.info("analysis.start_dispatched", {
+				requestId: context.requestId,
+				organizationId: context.organizationId,
+				caseId: finalRun.caseId,
+				analysisRunId: finalRun.id,
+				status: finalRun.status,
+			});
 
 			return toAnalysisRunOutput(finalRun);
 		}),
@@ -669,6 +683,14 @@ export const analysisRouter = {
 					evidenceId: run.evidenceId,
 					status: finalRun.status,
 				},
+			});
+			logger.info("analysis.retry_dispatched", {
+				requestId: context.requestId,
+				organizationId: context.organizationId,
+				caseId: finalRun.caseId,
+				analysisRunId: finalRun.id,
+				attempts: finalRun.attempts,
+				status: finalRun.status,
 			});
 
 			return toAnalysisRunOutput(finalRun);

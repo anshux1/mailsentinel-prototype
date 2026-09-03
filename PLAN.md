@@ -3,10 +3,10 @@
 This document defines the remaining-work plan for MailSentinel. Implementation proceeds in this strict order:
 
 1. **Python analyzer completion and hardening** (Part 1 follow-up: P4–P8) — **complete**
-2. **oRPC/application-server implementation** (Part 2: S1–S8) — next
-3. **UI/frontend implementation** (Part 3) — deferred until Part 2 passes its acceptance gate
+2. **oRPC/application-server implementation** (Part 2: S1–S8) — **complete**
+3. **UI/frontend implementation** (Part 3) — ready for contract-first planning
 
-Part 1 is complete and its acceptance gate has passed. Do not begin Part 3 until Part 2 is complete. Contract changes must be completed and regenerated before dependent implementation is merged.
+Parts 1 and 2 are complete and both acceptance gates have passed. Contract changes must be completed and regenerated before dependent implementation is merged.
 
 > **Docker exclusion:** Docker, Compose, container images, and infrastructure runtime scripts are outside this plan. Do not modify `infra/compose.yaml`, `infra/scripts/**`, or `apps/analyzer/Dockerfile` while implementing Parts 1 and 2 unless a separate task explicitly authorizes it.
 
@@ -202,7 +202,7 @@ Part 2 application-server work may now begin. Part 3 remains deferred.
 
 ---
 
-## Part 2 — oRPC and application server
+## Part 2 — oRPC and application server — **complete**
 
 Begin this part only after the Part 1 acceptance gate passes and analyzer contracts are frozen.
 
@@ -221,7 +221,7 @@ The browser must call oRPC only. It must never receive analyzer service tokens, 
 
 ---
 
-### Phase S1 — Complete the application-facing product schema
+### Phase S1 — Complete the application-facing product schema — **complete**
 
 #### Scope
 Review the analyzer persistence schema provisioned in Part 1 (`0002_great_miss_america.sql`), evolve `packages/db/src/schema.ts` for application query and reporting requirements, and create any additional reviewed Drizzle migrations:
@@ -243,7 +243,7 @@ Review the analyzer persistence schema provisioned in Part 1 (`0002_great_miss_a
 
 ---
 
-### Phase S2 — Tenant-scoped repositories and transactions
+### Phase S2 — Tenant-scoped repositories and transactions — **complete**
 
 #### Scope
 Expand `packages/db/src/repositories.ts` or focused repository modules:
@@ -264,7 +264,7 @@ Expand `packages/db/src/repositories.ts` or focused repository modules:
 
 ---
 
-### Phase S3 — Authorization model
+### Phase S3 — Authorization model — **complete**
 
 #### Scope
 - Preserve session-aware oRPC context.
@@ -284,7 +284,7 @@ Expand `packages/db/src/repositories.ts` or focused repository modules:
 
 ---
 
-### Phase S4 — Evidence upload orchestration
+### Phase S4 — Evidence upload orchestration — **complete**
 
 #### Scope
 Implement a server-owned upload flow; do not expose storage credentials to the client:
@@ -307,7 +307,7 @@ Implement a server-owned upload flow; do not expose storage credentials to the c
 
 ---
 
-### Phase S5 — Analysis creation and private analyzer dispatch
+### Phase S5 — Analysis creation and private analyzer dispatch — **complete**
 
 #### Scope
 - Add `analysis.start` mutation taking a tenant-scoped `caseId` and `evidenceId`.
@@ -329,7 +329,7 @@ Implement a server-owned upload flow; do not expose storage credentials to the c
 
 ---
 
-### Phase S6 — Real oRPC queries and status polling contract
+### Phase S6 — Real oRPC queries and status polling contract — **complete**
 
 #### Scope
 Organize router into focused modules with required procedures:
@@ -359,7 +359,7 @@ report.generate, report.get, report.list
 
 ---
 
-### Phase S7 — Report generation backend
+### Phase S7 — Report generation backend — **complete**
 
 #### Scope
 Implement reporting as a server-owned, versioned capability:
@@ -382,7 +382,7 @@ Implement reporting as a server-owned, versioned capability:
 
 ---
 
-### Phase S8 — Server integration, observability, and hardening
+### Phase S8 — Server integration, observability, and hardening — **complete**
 
 #### Scope
 - Add integration tests covering case -> evidence -> analysis -> result -> report using fake analyzer execution or seeded completed results.
@@ -408,7 +408,7 @@ Implement reporting as a server-owned, versioned capability:
 
 ---
 
-### Part 2 acceptance gate
+### Part 2 acceptance gate — **passed**
 
 All of the following must pass before frontend product work begins:
 
@@ -418,10 +418,20 @@ pnpm contracts:check
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm build
+pnpm build  # with the documented required environment variables
 ```
 
 Run database migration and integration tests against the supported local PostgreSQL test setup, without changing Docker/Compose.
+
+Verification results:
+- `pnpm env:check` and `pnpm contracts:check` pass; the regenerated analyzer OpenAPI and TypeScript artifacts are synchronized with no drift.
+- `pnpm lint` and `pnpm typecheck` pass across every workspace, including analyzer Ruff/mypy.
+- `pnpm test` passes: 253 web tests, 55 database tests, and 132 analyzer tests, with the known upstream Starlette deprecation warning acknowledged.
+- Database migrations are applied to the local PostgreSQL test database and the 13 PostgreSQL repository integration tests run against it.
+- `pnpm build` succeeds with the documented required environment variables; the emitted client bundle contains no analyzer token, storage credential, or database URL.
+- Docker, Compose, `infra/scripts/**`, and `apps/analyzer/Dockerfile` were not modified.
+
+Application API reference: `docs/api/README.md`. Polling contract: `apps/web/src/server/orpc/POLLING.md`. Failure recovery: `apps/web/src/server/orpc/RECOVERY.md`.
 
 ---
 
@@ -444,16 +454,16 @@ P4 forensic extraction follow-up (complete)
 → P7 persistence & audit APIs (complete)
 → P8 worker hardening, logging & idempotency (complete)
 → Part 1 gate (passed)
-→ S1 database schema review (next)
-→ S2 repositories
-→ S3 authorization
-→ S4 evidence upload
-→ S5 analyzer dispatch
-→ S6 oRPC reads/results
-→ S7 reports
-→ S8 integration/hardening
-→ Part 2 gate
-→ Part 3 frontend planning
+→ S1 database schema review (complete)
+→ S2 repositories (complete)
+→ S3 authorization (complete)
+→ S4 evidence upload (complete)
+→ S5 analyzer dispatch (complete)
+→ S6 oRPC reads/results (complete)
+→ S7 reports (complete)
+→ S8 integration/hardening (complete)
+→ Part 2 gate (passed)
+→ Part 3 frontend planning (next)
 ```
 
 ### Commit discipline

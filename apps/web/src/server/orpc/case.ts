@@ -9,6 +9,7 @@ import {
 import { z } from "zod";
 import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 import { investigatorProcedure, viewerProcedure } from "./middleware";
 
 export const caseShell = z.object({
@@ -33,12 +34,17 @@ export const listCasesInput = z
 	.optional();
 
 export const getCaseInput = z.object({
-	caseId: z.string().min(1, "Case ID is required"),
+	caseId: z
+		.string()
+		.min(1, "Case ID is required")
+		.max(200)
+		.regex(/^[A-Za-z0-9_-]+$/),
 });
 
 export const createCaseInput = z.object({
 	title: z
 		.string()
+		.trim()
 		.min(1, "Title is required")
 		.max(160, "Title cannot exceed 160 characters"),
 });
@@ -105,6 +111,11 @@ export const caseRouter = {
 				metadata: {
 					title: createdCase.title,
 				},
+			});
+			logger.info("case.created", {
+				requestId: context.requestId,
+				organizationId: context.organizationId,
+				caseId: createdCase.id,
 			});
 
 			return createdCase;

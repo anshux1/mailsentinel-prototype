@@ -1479,5 +1479,28 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 				expect(JSON.stringify(initAudit?.metadata)).not.toContain(".eml");
 			});
 		});
+
+		it("reconciles a successful storage write when the provider response is lost", async () => {
+			const { client, storage, evidenceRepo } = setupTest();
+			const pending = await client.evidence.createUpload({
+				caseId: "case_alpha_1",
+				byteSize: sampleByteSize,
+				sha256: sampleSha256,
+			});
+			storage.simulatePutFailureAfterWrite = true;
+
+			const completed = await client.evidence.completeUpload({
+				caseId: "case_alpha_1",
+				evidenceId: pending.id,
+				body: sampleBase64,
+			});
+			expect(completed.status).toBe("verified");
+			const persisted = await evidenceRepo.getEvidence({
+				organizationId: "org_alpha",
+				caseId: "case_alpha_1",
+				evidenceId: pending.id,
+			});
+			expect(persisted?.status).toBe("verified");
+		});
 	});
 });

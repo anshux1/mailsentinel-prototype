@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import {
 	type AuditRepository,
+	ConflictError as DbConflictError,
 	DrizzleAuditRepository,
 	DrizzleCaseRepository,
 	DrizzleEvidenceRepository,
@@ -96,6 +97,31 @@ export async function attemptStorageCleanup(params: {
 	}
 }
 
+async function recordUploadInitAudit(
+	auditRepo: AuditRepository,
+	params: {
+		organizationId: string;
+		actorUserId: string | null;
+		evidence: EvidenceShell;
+		requestId?: string;
+	},
+) {
+	return recordAuditEvent(auditRepo, {
+		organizationId: params.organizationId,
+		actorUserId: params.actorUserId,
+		action: "evidence.upload_init",
+		resourceType: "evidence",
+		resourceId: params.evidence.id,
+		requestId: params.requestId,
+		metadata: {
+			caseId: params.evidence.caseId,
+			sha256: params.evidence.sha256,
+			byteSize: params.evidence.byteSize,
+			contentType: params.evidence.contentType,
+		},
+	});
+}
+
 export async function recordCompletionAudit(
 	auditRepo: AuditRepository,
 	params: {
@@ -152,8 +178,13 @@ export function validateAndSanitizeFilename(filename: string): string {
 	return trimmed;
 }
 
+const identifierSchema = z
+	.string()
+	.min(1)
+	.max(200)
+	.regex(/^[A-Za-z0-9_-]+$/);
 export const createUploadInput = z.object({
-	caseId: z.string().min(1, "Case ID is required"),
+	caseId: identifierSchema,
 	byteSize: z
 		.number()
 		.int("Byte size must be an integer")
@@ -180,8 +211,8 @@ export const createUploadInput = z.object({
 });
 
 export const completeUploadInput = z.object({
-	caseId: z.string().min(1, "Case ID is required"),
-	evidenceId: z.string().min(1, "Evidence ID is required"),
+	caseId: identifierSchema,
+	evidenceId: identifierSchema,
 	body: z.string().min(1, "Evidence payload cannot be empty"),
 	sha256: z
 		.string()
@@ -193,7 +224,7 @@ export const completeUploadInput = z.object({
 });
 
 export const listEvidenceInput = z.object({
-	caseId: z.string().min(1, "Case ID is required"),
+	caseId: identifierSchema,
 	status: z.enum(["pending", "stored", "verified", "failed"]).optional(),
 	limit: z.number().int().min(1).max(100).default(50).optional(),
 	cursor: z
@@ -209,8 +240,8 @@ export const listEvidenceOutputSchema = z.object({
 });
 
 export const getEvidenceInput = z.object({
-	caseId: z.string().min(1, "Case ID is required"),
-	evidenceId: z.string().min(1, "Evidence ID is required"),
+	caseId: identifierSchema,
+	evidenceId: identifierSchema,
 });
 
 export const evidenceRouter = {
@@ -235,62 +266,68 @@ export const evidenceRouter = {
 			const evidenceRepo =
 				context.repos?.evidence ?? new DrizzleEvidenceRepository(db);
 
-			if (input.idempotencyKey) {
-				const existingList = await evidenceRepo.listEvidence({
+			const auditRepo = context.repos?.audit ?? new DrizzleAuditRepository(db);
+			const findByIdempotencyKey = async () => {
+				if (!input.idempotencyKey) return undefined;
+				const records = await evidenceRepo.listEvidence({
 					organizationId: context.organizationId,
 					caseId: input.caseId,
 				});
-				const matching = existingList.find(
-					(e) => e.idempotencyKey === input.idempotencyKey,
+				return records.find(
+					(record) => record.idempotencyKey === input.idempotencyKey,
 				);
-				if (matching) {
-					if (
-						matching.sha256 === normalizedSha256 &&
-						matching.byteSize === input.byteSize
-					) {
-						return toEvidenceOutput(matching);
-					}
+			};
+			const returnExisting = async (matching: EvidenceShell) => {
+				if (
+					matching.sha256 !== normalizedSha256 ||
+					matching.byteSize !== input.byteSize
+				) {
 					throw new ConflictError(
-						`Evidence with idempotencyKey '${input.idempotencyKey}' already exists with differing metadata`,
+						"Idempotent upload metadata does not match the existing evidence",
 					);
 				}
-			}
+				await recordUploadInitAudit(auditRepo, {
+					organizationId: context.organizationId,
+					actorUserId: context.userId,
+					evidence: matching,
+					requestId: context.requestId,
+				});
+				return toEvidenceOutput(matching);
+			};
 
-			const artifactId = randomUUID();
-			const evidenceId = `ev_${randomUUID()}`;
-			const objectKey = evidenceObjectKey({
-				organizationId: context.organizationId,
-				caseId: input.caseId,
-				artifactId,
-			});
+			const existing = await findByIdempotencyKey();
+			if (existing) return returnExisting(existing);
 
-			const pending = await evidenceRepo.createPending({
-				id: evidenceId,
-				organizationId: context.organizationId,
-				caseId: input.caseId,
-				objectKey,
-				sha256: normalizedSha256,
-				byteSize: input.byteSize,
-				contentType: input.contentType ?? "message/rfc822",
-				idempotencyKey: input.idempotencyKey ?? null,
-			});
-
-			const auditRepo = context.repos?.audit ?? new DrizzleAuditRepository(db);
-			await recordAuditEvent(auditRepo, {
-				organizationId: context.organizationId,
-				actorUserId: context.userId,
-				action: "evidence.upload_init",
-				resourceType: "evidence",
-				resourceId: pending.id,
-				requestId: context.requestId,
-				metadata: {
+			let pending: EvidenceShell;
+			try {
+				pending = await evidenceRepo.createPending({
+					id: `ev_${randomUUID()}`,
+					organizationId: context.organizationId,
 					caseId: input.caseId,
+					objectKey: evidenceObjectKey({
+						organizationId: context.organizationId,
+						caseId: input.caseId,
+						artifactId: randomUUID(),
+					}),
 					sha256: normalizedSha256,
 					byteSize: input.byteSize,
-					contentType: pending.contentType,
-				},
-			});
+					contentType: input.contentType ?? "message/rfc822",
+					idempotencyKey: input.idempotencyKey ?? null,
+				});
+			} catch (error) {
+				if (input.idempotencyKey && error instanceof DbConflictError) {
+					const raced = await findByIdempotencyKey();
+					if (raced) return returnExisting(raced);
+				}
+				throw error;
+			}
 
+			await recordUploadInitAudit(auditRepo, {
+				organizationId: context.organizationId,
+				actorUserId: context.userId,
+				evidence: pending,
+				requestId: context.requestId,
+			});
 			return toEvidenceOutput(pending);
 		}),
 
@@ -415,33 +452,49 @@ export const evidenceRouter = {
 						sha256: actualSha256,
 					});
 				} catch (storageErr) {
-					await attemptStorageCleanup({
-						storage,
-						objectKey: existing.objectKey,
-						organizationId: context.organizationId,
-						caseId: input.caseId,
-						evidenceId: input.evidenceId,
-						requestId: context.requestId,
-						trigger: "put_failure",
-					});
+					let storedObjectMatches = false;
 					try {
-						await evidenceRepo.markFailed({
+						const stored = await storage.headEvidence({
+							objectKey: existing.objectKey,
+							organizationId: context.organizationId,
+							caseId: input.caseId,
+						});
+						storedObjectMatches =
+							stored?.byteSize === buffer.byteLength &&
+							stored.sha256?.toLowerCase() === actualSha256 &&
+							(!stored.contentType || stored.contentType === "message/rfc822");
+					} catch {
+						storedObjectMatches = false;
+					}
+					if (!storedObjectMatches) {
+						await attemptStorageCleanup({
+							storage,
+							objectKey: existing.objectKey,
 							organizationId: context.organizationId,
 							caseId: input.caseId,
 							evidenceId: input.evidenceId,
-							failureReason: "Storage write failed",
+							requestId: context.requestId,
+							trigger: "put_failure",
 						});
-					} catch {
-						// Suppress secondary DB error during storage failure handling
+						try {
+							await evidenceRepo.markFailed({
+								organizationId: context.organizationId,
+								caseId: input.caseId,
+								evidenceId: input.evidenceId,
+								failureReason: "Storage write failed",
+							});
+						} catch {
+							// Suppress secondary DB error during storage failure handling
+						}
+						throw new DependencyError(
+							"Storage service write failed",
+							"s3",
+							undefined,
+							{
+								cause: storageErr,
+							},
+						);
 					}
-					throw new DependencyError(
-						"Storage service write failed",
-						"s3",
-						undefined,
-						{
-							cause: storageErr,
-						},
-					);
 				}
 
 				try {
@@ -558,6 +611,13 @@ export const evidenceRouter = {
 				byteSize: buffer.byteLength,
 				status: verifiedRecord.status,
 				requestId: context.requestId,
+			});
+			logger.info("evidence.upload_completed", {
+				requestId: context.requestId,
+				organizationId: context.organizationId,
+				caseId: input.caseId,
+				evidenceId: verifiedRecord.id,
+				byteSize: buffer.byteLength,
 			});
 
 			return toEvidenceOutput(verifiedRecord);

@@ -186,6 +186,7 @@ export class MemoryEvidenceStorage implements EvidenceStorage {
 	>();
 
 	public simulatePutFailure = false;
+	public simulatePutFailureAfterWrite = false;
 	public simulateDeleteFailure = false;
 	public simulateHeadFailure = false;
 
@@ -241,6 +242,9 @@ export class MemoryEvidenceStorage implements EvidenceStorage {
 			organizationId: input.organizationId,
 			caseId: input.caseId,
 		});
+		if (this.simulatePutFailureAfterWrite) {
+			throw new Error("Simulated lost storage write response");
+		}
 	}
 
 	async deleteEvidence(input: {

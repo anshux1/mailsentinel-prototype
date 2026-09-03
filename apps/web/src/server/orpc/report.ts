@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+	ConflictError as DbConflictError,
 	DrizzleAnalysisRunRepository,
 	DrizzleAuditRepository,
 	DrizzleReportRepository,
@@ -12,6 +13,7 @@ import {
 import { z } from "zod";
 import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
+import { logger } from "@/server/logger";
 import { formatCompletedAnalysisResult } from "@/server/orpc/analysis-schemas";
 import {
 	buildReportDocument,
@@ -28,6 +30,11 @@ import { ConflictError, DependencyError, NotFoundError } from "./errors";
 import { investigatorProcedure, viewerProcedure } from "./middleware";
 
 const reportFormatSchema = z.enum(["json", "html", "text"]);
+const identifierSchema = z
+	.string()
+	.min(1)
+	.max(200)
+	.regex(/^[A-Za-z0-9_-]+$/);
 
 export const reportOutputSchema = z.object({
 	id: z.string(),
@@ -70,19 +77,19 @@ export function toReportOutput(record: ReportShell): ReportOutput {
 
 export const generateReportInput = z
 	.object({
-		analysisRunId: z.string().min(1).max(200),
+		analysisRunId: identifierSchema,
 		format: reportFormatSchema.default("html").optional(),
 	})
 	.strict();
 
 export const getReportInput = z.object({
-	reportId: z.string().min(1).max(200),
-	caseId: z.string().min(1).max(200).optional(),
+	reportId: identifierSchema,
+	caseId: identifierSchema.optional(),
 });
 
 export const listReportsInput = z.object({
-	caseId: z.string().min(1).max(200).optional(),
-	analysisRunId: z.string().min(1).max(200).optional(),
+	caseId: identifierSchema.optional(),
+	analysisRunId: identifierSchema.optional(),
 	format: z.enum(["json", "html", "pdf", "markdown", "text"]).optional(),
 	status: z.enum(["pending", "generating", "completed", "failed"]).optional(),
 	limit: z.number().int().min(1).max(100).default(50).optional(),
@@ -145,31 +152,44 @@ export const reportRouter = {
 			const document = buildReportDocument(result, generatedAt);
 			const rendered = renderReport(document, format);
 
-			const created = await transactionExecutor(context)(async (repos) => {
-				const report = await repos.reports.createReport({
-					organizationId: context.organizationId,
-					caseId: run.caseId,
-					analysisRunId: run.id,
-					format,
-					status: "generating",
-					metadata: { reportVersion: REPORT_VERSION },
-				});
-				await recordAuditEvent(repos.audit, {
-					organizationId: context.organizationId,
-					actorUserId: context.userId,
-					action: "report.requested",
-					resourceType: "report",
-					resourceId: report.id,
-					requestId: context.requestId,
-					metadata: {
+			const createVersion = () =>
+				transactionExecutor(context)(async (repos) => {
+					const report = await repos.reports.createReport({
+						organizationId: context.organizationId,
 						caseId: run.caseId,
 						analysisRunId: run.id,
 						format,
-						version: report.version,
-					},
+						status: "generating",
+						metadata: { reportVersion: REPORT_VERSION },
+					});
+					await recordAuditEvent(repos.audit, {
+						organizationId: context.organizationId,
+						actorUserId: context.userId,
+						action: "report.requested",
+						resourceType: "report",
+						resourceId: report.id,
+						requestId: context.requestId,
+						metadata: {
+							caseId: run.caseId,
+							analysisRunId: run.id,
+							format,
+							version: report.version,
+						},
+					});
+					return report;
 				});
-				return report;
-			});
+			let created: ReportShell | undefined;
+			for (let attempt = 0; attempt < 3 && !created; attempt += 1) {
+				try {
+					created = await createVersion();
+				} catch (error) {
+					if (!(error instanceof DbConflictError) || attempt === 2) throw error;
+				}
+			}
+			if (!created)
+				throw new ConflictError(
+					"Unable to allocate an immutable report version",
+				);
 
 			const objectKey = reportObjectKey({
 				organizationId: context.organizationId,
@@ -253,6 +273,15 @@ export const reportRouter = {
 					version: completed.version,
 				},
 			});
+			logger.info("report.generated", {
+				requestId: context.requestId,
+				organizationId: context.organizationId,
+				caseId: run.caseId,
+				analysisRunId: run.id,
+				reportId: completed.id,
+				format,
+				version: completed.version,
+			});
 
 			return {
 				...toReportOutput(completed),
@@ -289,6 +318,31 @@ export const reportRouter = {
 			});
 			if (content === null)
 				throw new DependencyError("Report object is unavailable", "storage");
+
+			const auditRepo = context.repos?.audit ?? new DrizzleAuditRepository(db);
+			await recordAuditEvent(auditRepo, {
+				organizationId: context.organizationId,
+				actorUserId: context.userId,
+				action: "report.download",
+				resourceType: "report",
+				resourceId: report.id,
+				requestId: context.requestId,
+				metadata: {
+					caseId: report.caseId,
+					analysisRunId: report.analysisRunId,
+					format: report.format,
+					version: report.version,
+				},
+			});
+			logger.info("report.downloaded", {
+				requestId: context.requestId,
+				organizationId: context.organizationId,
+				caseId: report.caseId,
+				analysisRunId: report.analysisRunId,
+				reportId: report.id,
+				version: report.version,
+			});
+
 			return {
 				...toReportOutput(report),
 				content,

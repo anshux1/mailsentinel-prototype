@@ -11,6 +11,7 @@ export type AuditAction =
 	| "analysis.start"
 	| "analysis.retry"
 	| "report.generate"
+	| "report.download"
 	| "retention.purge"
 	| "role.assign"
 	| (string & {});
