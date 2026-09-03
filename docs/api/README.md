@@ -42,6 +42,15 @@ Roles are hierarchical: `viewer` < `investigator` < `owner`
 
 Public. `GET`. Returns `{ ok, service: "web", timestamp }`. No tenant context.
 
+### Organizations
+
+| Procedure | Role | Input | Output |
+| --- | --- | --- | --- |
+| `organization.list` | authenticated | none | `{ items: { organizationId, name, role }[] }` |
+
+Returns only the *calling user's* memberships. The browser needs it to choose
+the `x-organization-id` it sends — the server never picks one implicitly.
+
 ### Cases
 
 | Procedure | Role | Input | Output |
@@ -95,6 +104,9 @@ Upload rules:
   identifier. Browser-supplied artifact metadata is never forwarded.
 - A run is committed as `accepted` before dispatch and advances to `queued` only
   on an exact analyzer `202 accepted`.
+- `analysis.list` and the mutations return the run's summary columns
+  (`verdict`, `score`, `confidence`) alongside its lifecycle state, so a run
+  list shows its outcome without a second read.
 - `analysis.getResult` returns a discriminated union: `{ ready: false, status, ... }`
   until the run completes, then `{ ready: true, verdict, score, findings, ... }`
   with rule identifiers, severities, explanations, evidence references,

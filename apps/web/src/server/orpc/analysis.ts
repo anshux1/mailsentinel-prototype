@@ -29,6 +29,7 @@ import {
 	analysisResultOutputSchema,
 	analysisStatusOutputSchema,
 	formatCompletedAnalysisResult,
+	verdictValueSchema,
 } from "./analysis-schemas";
 import type { RpcContext, TransactionExecutor } from "./context";
 import { ConflictError, DependencyError, NotFoundError } from "./errors";
@@ -78,6 +79,10 @@ export const analysisRunOutputSchema = z.object({
 	]),
 	phase: z.string().nullable().optional(),
 	progress: z.number().nullable().optional(),
+	// Summary columns so a run list can show its outcome without a second read.
+	verdict: verdictValueSchema.nullable().optional(),
+	score: z.number().int().nullable().optional(),
+	confidence: z.number().nullable().optional(),
 	failureCode: z.string().nullable().optional(),
 	failureMessage: z.string().nullable().optional(),
 	retryable: z.boolean(),
@@ -103,6 +108,9 @@ export function toAnalysisRunOutput(
 		status: record.status,
 		phase: record.phase ?? null,
 		progress: record.progress ?? null,
+		verdict: record.verdict ?? null,
+		score: record.score ?? null,
+		confidence: record.confidence ?? null,
 		failureCode: record.failureCode ?? null,
 		failureMessage: record.failureMessage ?? null,
 		retryable: record.retryable,

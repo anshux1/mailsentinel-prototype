@@ -4,9 +4,9 @@ This document defines the remaining-work plan for MailSentinel. Implementation p
 
 1. **Python analyzer completion and hardening** (Part 1 follow-up: P4–P8) — **complete**
 2. **oRPC/application-server implementation** (Part 2: S1–S8) — **complete**
-3. **UI/frontend implementation** (Part 3) — ready for contract-first planning
+3. **UI/frontend implementation** (Part 3) — **complete**
 
-Parts 1 and 2 are complete and both acceptance gates have passed. Contract changes must be completed and regenerated before dependent implementation is merged.
+All three parts are complete; Parts 1 and 2 passed their acceptance gates before the frontend was built. Contract changes must be completed and regenerated before dependent implementation is merged.
 
 > **Docker exclusion:** Docker, Compose, container images, and infrastructure runtime scripts are outside this plan. Do not modify `infra/compose.yaml`, `infra/scripts/**`, or `apps/analyzer/Dockerfile` while implementing Parts 1 and 2 unless a separate task explicitly authorizes it.
 
@@ -198,7 +198,7 @@ Verification results:
 - Offline tests remain network-free; live provider tests use mocks.
 - Root lint, typecheck, tests, environment checks, database checks, and the production build pass.
 
-Part 2 application-server work may now begin. Part 3 remains deferred.
+Part 2 application-server work followed this gate, and Part 3 followed Part 2's.
 
 ---
 
@@ -435,11 +435,37 @@ Application API reference: `docs/api/README.md`. Polling contract: `apps/web/src
 
 ---
 
-## Part 3 — UI/frontend (Deferred)
+## Part 3 — UI/frontend — **implemented**
 
-Product implementation for the dashboard, case workspace, evidence upload experience, analysis views, and reporting interface is intentionally deferred until Parts 1 and 2 pass their acceptance gates.
+Built after the Part 2 acceptance gate passed. `apps/web/DESIGN.md` is the single source of truth for the visual language: a dark-only, hairline-bordered command-palette system whose depth comes from a four-step surface ladder rather than shadows.
 
-This section is reserved for contract-first frontend phases. Do not expand or implement the frontend product plan yet.
+### Delivered surfaces
+
+- **Marketing** (`/`): hero with the one permitted red stripe band, a rendered command-palette mockup, pipeline / evidence / explainability / boundaries sections, and a live `system.health` indicator.
+- **Authentication** (`/sign-in`): credential form with safe generic failures, `?next=` return-to routing, and redirect for an already-authenticated visitor.
+- **Workspace shell** (`(workspace)`): session gate, sidebar and mobile drawer, organization switcher, account menu, and a ⌘K command palette that searches real cases.
+- **Dashboard** (`/dashboard`): tenant activity counters plus recent runs and cases.
+- **Cases** (`/cases`, `/cases/[caseId]`): list with client-side filtering, creation dialog, case detail with evidence and analysis-run tabs.
+- **Evidence**: upload dialog that computes SHA-256 in the browser, registers the digest, then sends the bounded base64 body; verified, pending, and failed rows all render their real state.
+- **Analysis** (`/analysis`, `/analysis/[analysisRunId]`): filterable run list, live status polling for active runs, retry for owners, and a seven-panel result view (findings, authentication, routing, content, indicators, attachments, headers) where every finding shows its rule id, severity, score contribution, explanation, and evidence references.
+- **Reports** (`/reports`, `/reports/[reportId]`): generation dialog, immutable version list, and a viewer that renders HTML reports inside a fully sandboxed frame with source and download alternatives.
+- **Settings** (`/settings`): session, organization switching, and the role/permission matrix the server enforces.
+
+### Stack and conventions
+
+- React 19 + TypeScript, Tailwind 4, and shadcn/ui primitives restyled against `DESIGN.md` tokens (`components.json`, `src/components/ui`).
+- TanStack Query owns every server read and write: typed oRPC query/mutation options, status-driven polling intervals, cache invalidation by procedure key, and one global safe-error toast carrying the server's `requestId`.
+- Motion supplies entrance, list-stagger, dialog, and meter animations, all bounded and disabled under `prefers-reduced-motion`.
+- Separation is `components/ui` (primitives) → `components/common` and `components/layout` (composition) → `features/*` (data + screens) → `lib/*` (client utilities).
+
+### Server additions required by the browser
+
+- `organization.list` returns the caller's own memberships so the browser can supply `x-organization-id`; the server still never selects an organization implicitly.
+- `analysisRunOutputSchema` now carries the persisted `verdict`, `score`, and `confidence` summary columns so a run list shows its outcome without a second read.
+
+### Preserved boundaries
+
+Object keys, storage credentials, and analyzer tokens never reach the browser; raw email is never rendered; links found in evidence are displayed as inert text and never fetched; and role-gated actions are hidden in the UI but still enforced server-side.
 
 ---
 
@@ -463,7 +489,7 @@ P4 forensic extraction follow-up (complete)
 → S7 reports (complete)
 → S8 integration/hardening (complete)
 → Part 2 gate (passed)
-→ Part 3 frontend planning (next)
+→ Part 3 frontend (complete)
 ```
 
 ### Commit discipline

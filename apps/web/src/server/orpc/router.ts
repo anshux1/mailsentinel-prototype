@@ -3,6 +3,7 @@ import "server-only";
 import { analysisRouter } from "./analysis";
 import { caseRouter, caseShell } from "./case";
 import { evidenceRouter } from "./evidence";
+import { organizationRouter } from "./organization";
 import { reportRouter } from "./report";
 import { systemRouter } from "./system";
 
@@ -22,6 +23,7 @@ export { caseShell };
 
 export const router = {
 	system: systemRouter,
+	organization: organizationRouter,
 	case: caseRouter,
 	evidence: evidenceRouter,
 	analysis: analysisRouter,

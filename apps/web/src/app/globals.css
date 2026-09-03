@@ -1,31 +1,261 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-	--background: #ffffff;
-	--foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * MailSentinel design system.
+ * Source of truth: apps/web/DESIGN.md — a dark-only, hairline-bordered
+ * command-palette system. Elevation comes from the four-step surface ladder
+ * (canvas -> surface -> elevated -> card), never from drop shadows.
+ */
 
 @theme inline {
+	/* --- Surface ladder --------------------------------------------------- */
+	--color-canvas: #07080a;
+	--color-surface: #0d0d0d;
+	--color-surface-elevated: #101111;
+	--color-surface-card: #121212;
+	--color-button-fg: #18191a;
+
+	/* --- Hairlines -------------------------------------------------------- */
+	--color-hairline: #242728;
+	--color-hairline-soft: rgba(255, 255, 255, 0.08);
+	--color-hairline-strong: rgba(255, 255, 255, 0.16);
+
+	/* --- Text ------------------------------------------------------------- */
+	--color-ink: #f4f4f6;
+	--color-body: #cdcdcd;
+	--color-charcoal: #d3d3d4;
+	--color-mute: #9c9c9d;
+	--color-ash: #6a6b6c;
+	--color-stone: #434345;
+	--color-on-dark: #ffffff;
+	--color-on-dark-mute: rgba(255, 255, 255, 0.72);
+
+	/* --- Category accents (illustration only, never chrome) --------------- */
+	--color-accent-blue: #57c1ff;
+	--color-accent-blue-soft: rgba(87, 193, 255, 0.15);
+	--color-accent-red: #ff6161;
+	--color-accent-red-soft: rgba(255, 97, 97, 0.15);
+	--color-accent-green: #59d499;
+	--color-accent-green-soft: rgba(89, 212, 153, 0.15);
+	--color-accent-yellow: #ffc533;
+	--color-accent-yellow-soft: rgba(255, 197, 51, 0.15);
+
+	/* --- shadcn token bridge ---------------------------------------------- */
 	--color-background: var(--background);
 	--color-foreground: var(--foreground);
-	--font-sans: var(--font-geist-sans);
-	--font-mono: var(--font-geist-mono);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-destructive-foreground: var(--destructive-foreground);
+	--color-border: var(--border);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+
+	--font-sans: var(--font-inter), "Inter Fallback", system-ui, sans-serif;
+	--font-mono: var(--font-geist-mono), ui-monospace, monospace;
+	--font-heading: var(--font-inter), "Inter Fallback", system-ui, sans-serif;
+
+	/* --- Radius scale (DESIGN.md `rounded`) ------------------------------- */
+	--radius-xs: 4px;
+	--radius-sm: 6px;
+	--radius-md: 8px;
+	--radius-lg: 10px;
+	--radius-xl: 16px;
+	--radius-2xl: 16px;
+	--radius-3xl: 16px;
+	--radius-4xl: 16px;
+
+	/* --- Spacing (DESIGN.md `spacing`) ------------------------------------ */
+	--spacing-section: 96px;
+
+	/* --- Motion ----------------------------------------------------------- */
+	--ease-brand: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--background: #0a0a0a;
-		--foreground: #ededed;
+/*
+ * Dark is the only mode. Both :root and .dark carry identical values so that
+ * shadcn primitives which key off `.dark` render correctly wherever they mount
+ * (including portalled dialogs and popovers).
+ */
+:root,
+.dark {
+	--radius: 10px;
+
+	--background: #07080a;
+	--foreground: #f4f4f6;
+
+	--card: #0d0d0d;
+	--card-foreground: #f4f4f6;
+
+	--popover: #101111;
+	--popover-foreground: #f4f4f6;
+
+	/* White IS the brand action colour — there is no second primary. */
+	--primary: #ffffff;
+	--primary-foreground: #000000;
+
+	--secondary: #101111;
+	--secondary-foreground: #ffffff;
+
+	--muted: #101111;
+	--muted-foreground: #9c9c9d;
+
+	--accent: #121212;
+	--accent-foreground: #ffffff;
+
+	--destructive: #ff6161;
+	--destructive-foreground: #07080a;
+
+	--border: #242728;
+	--input: #242728;
+	--ring: rgba(255, 255, 255, 0.16);
+
+	--sidebar: #0d0d0d;
+	--sidebar-foreground: #cdcdcd;
+	--sidebar-primary: #ffffff;
+	--sidebar-primary-foreground: #000000;
+	--sidebar-accent: #121212;
+	--sidebar-accent-foreground: #ffffff;
+	--sidebar-border: #242728;
+	--sidebar-ring: rgba(255, 255, 255, 0.16);
+}
+
+@layer base {
+	* {
+		@apply border-border;
+	}
+
+	html {
+		@apply font-sans;
+		color-scheme: dark;
+		scrollbar-color: var(--color-stone) transparent;
+	}
+
+	body {
+		background-color: var(--color-canvas);
+		color: var(--color-body);
+		/* ss03 (the alternate `g`) is part of the brand voice — see DESIGN.md. */
+		font-feature-settings: "calt", "kern", "liga", "ss03";
+		-webkit-font-smoothing: antialiased;
+	}
+
+	h1,
+	h2,
+	h3,
+	h4,
+	h5,
+	h6 {
+		color: var(--color-ink);
+		font-weight: 500;
+		letter-spacing: 0.2px;
+	}
+
+	:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+		outline: 1px solid var(--color-hairline-strong);
+		outline-offset: 2px;
+	}
+
+	::selection {
+		background: rgba(255, 255, 255, 0.16);
+		color: var(--color-on-dark);
+	}
+
+	::-webkit-scrollbar {
+		width: 10px;
+		height: 10px;
+	}
+
+	::-webkit-scrollbar-track {
+		background: transparent;
+	}
+
+	::-webkit-scrollbar-thumb {
+		background: var(--color-stone);
+		border: 3px solid var(--color-canvas);
+		border-radius: 9999px;
 	}
 }
 
-body {
-	background: var(--background);
-	color: var(--foreground);
-	font-family: Arial, Helvetica, sans-serif;
+@layer components {
+	/* Display tier additionally enables ss02/ss08 and disables standard liga. */
+	.font-display {
+		font-feature-settings: "calt", "kern", "ss02", "ss03", "ss08";
+		font-variant-ligatures: none;
+	}
+
+	/* The signature launch-banner motif: three diagonal red stripes washed
+	   across the top of the hero. One band per page, hero only — see
+	   DESIGN.md "Do's and Don'ts". */
+	.hero-stripes {
+		background-image:
+			linear-gradient(
+				100deg,
+				transparent 30%,
+				rgba(255, 87, 87, 0.5) 38%,
+				rgba(161, 19, 26, 0.35) 41%,
+				transparent 46%
+			),
+			linear-gradient(
+				100deg,
+				transparent 44%,
+				rgba(255, 87, 87, 0.32) 51%,
+				rgba(161, 19, 26, 0.2) 54%,
+				transparent 59%
+			),
+			linear-gradient(
+				100deg,
+				transparent 57%,
+				rgba(255, 87, 87, 0.2) 63%,
+				rgba(161, 19, 26, 0.12) 66%,
+				transparent 71%
+			);
+		filter: blur(26px);
+		opacity: 0.55;
+	}
+
+	/* Subtle physical-key feel on a flat dark canvas. */
+	.keycap-surface {
+		background-image: linear-gradient(180deg, #121212 0%, #0d0d0d 100%);
+	}
+
+	.surface-grid {
+		background-image:
+			linear-gradient(var(--color-hairline) 1px, transparent 1px),
+			linear-gradient(90deg, var(--color-hairline) 1px, transparent 1px);
+		background-size: 56px 56px;
+		mask-image: radial-gradient(
+			ellipse 70% 60% at 50% 0%,
+			#000 20%,
+			transparent 75%
+		);
+	}
 }
 
-:where(a, button, input, textarea, select):focus-visible {
-	outline: 2px solid #67e8f9;
-	outline-offset: 3px;
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		/* biome-ignore lint/complexity/noImportantStyles: must beat inline and library animation styles */
+		animation-duration: 0.01ms !important;
+		/* biome-ignore lint/complexity/noImportantStyles: must beat inline and library animation styles */
+		animation-iteration-count: 1 !important;
+		/* biome-ignore lint/complexity/noImportantStyles: must beat inline and library transition styles */
+		transition-duration: 0.01ms !important;
+		/* biome-ignore lint/complexity/noImportantStyles: must beat library scroll behaviour */
+		scroll-behavior: auto !important;
+	}
 }
