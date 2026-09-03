@@ -28,12 +28,14 @@ from app.extraction.extract import (
     extract_link_mismatches,
     extract_message_ids,
     extract_mime_parts,
+    extract_nested_messages,
     extract_received,
     extract_routing_anomalies,
 )
 from app.parsing.parser import ParsedMessage, parse_message
 from app.persistence.interfaces import AnalysisRepository, EvidenceStore
 from app.scoring.rules import RULESET_VERSION, confidence_for, score_findings, verdict_for
+from app.segmentation import ContainerFormat, detect_container
 
 PhaseCallback = Callable[[str, int | None], None]
 _ANALYSIS_CACHES: dict[str, InMemoryIndicatorCache] = {}
@@ -108,6 +110,18 @@ def analyze_bytes(
     message_id_observations = extract_message_ids(parsed, addresses)
     content_indicators = extract_content_indicators(parsed)
     link_mismatches = extract_link_mismatches(parsed)
+    nested_messages = extract_nested_messages(
+        raw,
+        analysis_time=analysis_time,
+        max_urls=settings.max_urls,
+        max_nested_depth=settings.max_nested_message_depth,
+        max_nested_messages=settings.max_nested_messages,
+        max_eml_bytes=settings.max_eml_bytes,
+        max_mime_parts=settings.max_mime_parts,
+        max_mime_depth=settings.max_mime_depth,
+        max_headers=settings.max_header_count,
+        max_attachment_bytes=settings.max_attachment_bytes,
+    )
 
     phase("enriching", 70)
     live = settings.enrichment_mode == "live"
@@ -151,9 +165,13 @@ def analyze_bytes(
         link_mismatches=link_mismatches,
         routing_anomalies=routing_anomalies,
         auth_conflicts=auth_conflicts,
+        nested_messages=nested_messages,
+    )
+    container_suspected = any("trailing_message_data" in w for w in parsed.warnings) or (
+        detect_container(raw) != ContainerFormat.SINGLE
     )
     return AnalysisResult(
-        schema_version="1.0.0",
+        schema_version="1.2.0",
         ruleset_version=RULESET_VERSION,
         analysis_version=settings.analysis_version,
         analysis_run_id=run_id,
@@ -186,6 +204,8 @@ def analyze_bytes(
             indicator_count=len(indicators),
         ),
         analyzed_at=analysis_time,
+        container_suspected=container_suspected,
+        nested_messages=nested_messages,
     )
 
 

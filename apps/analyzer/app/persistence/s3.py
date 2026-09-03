@@ -11,7 +11,7 @@ from botocore.config import Config
 from app.core.settings import Settings
 
 _EVIDENCE_KEY_RE = re.compile(
-    r"^organizations/([A-Za-z0-9_-]+)/cases/([A-Za-z0-9_-]+)/artifacts/([A-Za-z0-9_-]+\.eml)$"
+    r"^organizations/([A-Za-z0-9_-]+)/cases/([A-Za-z0-9_-]+)/artifacts/([A-Za-z0-9_-]+(?:\.[a-zA-Z0-9]+)?)$"
 )
 
 

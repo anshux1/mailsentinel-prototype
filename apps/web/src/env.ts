@@ -18,10 +18,33 @@ export const webServerSchema = z.object({
 		.default("true")
 		.transform((value) => value === "true"),
 	MAX_EML_BYTES: z.coerce.number().int().positive().default(26_214_400),
+	MAX_CONTAINER_BYTES: z.coerce
+		.number()
+		.int()
+		.positive()
+		.max(536_870_912)
+		.default(104_857_600),
 	APP_ENV: z
 		.enum(["development", "test", "demo", "production"])
 		.default("development"),
 	WEB_DATA_MODE: z.enum(["live", "fixture", "offline"]).default("fixture"),
+	MAILBOX_CONNECTORS_ENABLED: z
+		.enum(["true", "false"])
+		.default("false")
+		.transform((value) => value === "true"),
+	MAILBOX_TOKEN_ENCRYPTION_KEY: z.string().min(32).optional(),
+	MAILBOX_SYNC_MAX_MESSAGES: z.coerce
+		.number()
+		.int()
+		.min(1)
+		.max(1000)
+		.default(200),
+	GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+	GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+	// Legacy aliases remain supported for existing deployments.
+	GMAIL_CLIENT_ID: z.string().optional(),
+	GMAIL_CLIENT_SECRET: z.string().optional(),
+	GMAIL_REDIRECT_URI: z.url().optional(),
 });
 
 const publicSecretName =
@@ -60,8 +83,17 @@ export const env = createEnv({
 		S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
 		S3_FORCE_PATH_STYLE: process.env.S3_FORCE_PATH_STYLE,
 		MAX_EML_BYTES: process.env.MAX_EML_BYTES,
+		MAX_CONTAINER_BYTES: process.env.MAX_CONTAINER_BYTES,
 		APP_ENV: process.env.APP_ENV,
 		WEB_DATA_MODE: process.env.WEB_DATA_MODE,
+		MAILBOX_CONNECTORS_ENABLED: process.env.MAILBOX_CONNECTORS_ENABLED,
+		MAILBOX_TOKEN_ENCRYPTION_KEY: process.env.MAILBOX_TOKEN_ENCRYPTION_KEY,
+		MAILBOX_SYNC_MAX_MESSAGES: process.env.MAILBOX_SYNC_MAX_MESSAGES,
+		GOOGLE_OAUTH_CLIENT_ID: process.env.GOOGLE_OAUTH_CLIENT_ID,
+		GOOGLE_OAUTH_CLIENT_SECRET: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+		GMAIL_CLIENT_ID: process.env.GMAIL_CLIENT_ID,
+		GMAIL_CLIENT_SECRET: process.env.GMAIL_CLIENT_SECRET,
+		GMAIL_REDIRECT_URI: process.env.GMAIL_REDIRECT_URI,
 	},
 	skipValidation: process.env.NODE_ENV === "test",
 });

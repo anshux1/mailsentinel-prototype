@@ -285,6 +285,11 @@
             "title": "Confidence",
             "type": "number"
           },
+          "containerSuspected": {
+            "default": false,
+            "title": "Containersuspected",
+            "type": "boolean"
+          },
           "contentIndicators": {
             "items": {
               "$ref": "#/components/schemas/ContentIndicatorObservation"
@@ -365,6 +370,14 @@
             "title": "Mimeparts",
             "type": "array"
           },
+          "nestedMessages": {
+            "items": {
+              "$ref": "#/components/schemas/NestedMessageObservation"
+            },
+            "maxItems": 10,
+            "title": "Nestedmessages",
+            "type": "array"
+          },
           "organizationId": {
             "maxLength": 160,
             "minLength": 1,
@@ -396,14 +409,14 @@
             "type": "array"
           },
           "rulesetVersion": {
-            "default": "1.0.0",
+            "default": "v1.2.0",
             "maxLength": 80,
             "minLength": 1,
             "title": "Rulesetversion",
             "type": "string"
           },
           "schemaVersion": {
-            "default": "1.0.0",
+            "default": "1.2.0",
             "maxLength": 20,
             "minLength": 1,
             "title": "Schemaversion",
@@ -706,6 +719,127 @@
           "result"
         ],
         "title": "AuthenticationObservation",
+        "type": "object"
+      },
+      "ContainerFormat": {
+        "enum": [
+          "mbox",
+          "bare_concatenation",
+          "multipart/digest",
+          "single"
+        ],
+        "title": "ContainerFormat",
+        "type": "string"
+      },
+      "ContainerMessageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Date"
+          },
+          "fromAddress": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fromaddress"
+          },
+          "fromDisplayName": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fromdisplayname"
+          },
+          "messageId": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Messageid"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Subject"
+          }
+        },
+        "title": "ContainerMessageSummary",
+        "type": "object"
+      },
+      "ContainerSegment": {
+        "additionalProperties": false,
+        "properties": {
+          "byteLength": {
+            "exclusiveMinimum": 0,
+            "title": "Bytelength",
+            "type": "integer"
+          },
+          "byteOffset": {
+            "minimum": 0,
+            "title": "Byteoffset",
+            "type": "integer"
+          },
+          "index": {
+            "maximum": 100000,
+            "minimum": 0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ContainerMessageSummary"
+          }
+        },
+        "required": [
+          "index",
+          "byteOffset",
+          "byteLength",
+          "sha256"
+        ],
+        "title": "ContainerSegment",
         "type": "object"
       },
       "ContentIndicatorObservation": {
@@ -1405,6 +1539,185 @@
         "title": "MimePartObservation",
         "type": "object"
       },
+      "NestedMessageObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "addresses": {
+            "items": {
+              "$ref": "#/components/schemas/AddressObservation"
+            },
+            "maxItems": 100,
+            "title": "Addresses",
+            "type": "array"
+          },
+          "authConflicts": {
+            "items": {
+              "$ref": "#/components/schemas/AuthConflictObservation"
+            },
+            "maxItems": 100,
+            "title": "Authconflicts",
+            "type": "array"
+          },
+          "authentication": {
+            "items": {
+              "$ref": "#/components/schemas/AuthenticationObservation"
+            },
+            "maxItems": 100,
+            "title": "Authentication",
+            "type": "array"
+          },
+          "byteSize": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Bytesize"
+          },
+          "contentIndicators": {
+            "items": {
+              "$ref": "#/components/schemas/ContentIndicatorObservation"
+            },
+            "maxItems": 1000,
+            "title": "Contentindicators",
+            "type": "array"
+          },
+          "dateObservations": {
+            "items": {
+              "$ref": "#/components/schemas/DateObservation"
+            },
+            "maxItems": 1000,
+            "title": "Dateobservations",
+            "type": "array"
+          },
+          "depth": {
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Depth",
+            "type": "integer"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "maxItems": 500,
+            "title": "Findings",
+            "type": "array"
+          },
+          "headers": {
+            "items": {
+              "$ref": "#/components/schemas/HeaderObservation"
+            },
+            "maxItems": 1000,
+            "title": "Headers",
+            "type": "array"
+          },
+          "identityObservations": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityObservation"
+            },
+            "maxItems": 100,
+            "title": "Identityobservations",
+            "type": "array"
+          },
+          "indicators": {
+            "items": {
+              "$ref": "#/components/schemas/IndicatorObservation"
+            },
+            "maxItems": 1000,
+            "title": "Indicators",
+            "type": "array"
+          },
+          "linkMismatches": {
+            "items": {
+              "$ref": "#/components/schemas/LinkMismatchObservation"
+            },
+            "maxItems": 1000,
+            "title": "Linkmismatches",
+            "type": "array"
+          },
+          "messageIdObservations": {
+            "items": {
+              "$ref": "#/components/schemas/MessageIdObservation"
+            },
+            "maxItems": 1000,
+            "title": "Messageidobservations",
+            "type": "array"
+          },
+          "mimeParts": {
+            "items": {
+              "$ref": "#/components/schemas/MimePartObservation"
+            },
+            "maxItems": 200,
+            "title": "Mimeparts",
+            "type": "array"
+          },
+          "parserWarnings": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Parserwarnings",
+            "type": "array"
+          },
+          "path": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          },
+          "receivedHops": {
+            "items": {
+              "$ref": "#/components/schemas/ReceivedHop"
+            },
+            "maxItems": 200,
+            "title": "Receivedhops",
+            "type": "array"
+          },
+          "routingAnomalies": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingAnomalyObservation"
+            },
+            "maxItems": 200,
+            "title": "Routinganomalies",
+            "type": "array"
+          },
+          "score": {
+            "$ref": "#/components/schemas/ScoreBreakdown"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sha256"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/VerdictValue"
+          }
+        },
+        "required": [
+          "path",
+          "depth",
+          "score",
+          "verdict"
+        ],
+        "title": "NestedMessageObservation",
+        "type": "object"
+      },
       "ReceivedHop": {
         "additionalProperties": false,
         "properties": {
@@ -1597,6 +1910,88 @@
           "finalScore"
         ],
         "title": "ScoreBreakdown",
+        "type": "object"
+      },
+      "SegmentationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "byteSize": {
+            "exclusiveMinimum": 0,
+            "maximum": 536870912,
+            "title": "Bytesize",
+            "type": "integer"
+          },
+          "caseId": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Caseid",
+            "type": "string"
+          },
+          "evidenceId": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Evidenceid",
+            "type": "string"
+          },
+          "objectKey": {
+            "maxLength": 500,
+            "minLength": 1,
+            "pattern": "^organizations/[A-Za-z0-9_-]+/cases/[A-Za-z0-9_-]+/artifacts/[A-Za-z0-9_-]+(?:\\.[a-zA-Z0-9]+)?$",
+            "title": "Objectkey",
+            "type": "string"
+          },
+          "organizationId": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "Organizationid",
+            "type": "string"
+          },
+          "sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "caseId",
+          "organizationId",
+          "evidenceId",
+          "objectKey",
+          "sha256",
+          "byteSize"
+        ],
+        "title": "SegmentationRequest",
+        "type": "object"
+      },
+      "SegmentationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "containerFormat": {
+            "$ref": "#/components/schemas/ContainerFormat"
+          },
+          "messageCount": {
+            "minimum": 0,
+            "title": "Messagecount",
+            "type": "integer"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/ContainerSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "containerFormat",
+          "messageCount"
+        ],
+        "title": "SegmentationResult",
         "type": "object"
       },
       "SeverityValue": {
@@ -1847,6 +2242,49 @@
           }
         ],
         "summary": "Analysis Result"
+      }
+    },
+    "/v1/evidence/segment": {
+      "post": {
+        "operationId": "segment_evidence_v1_evidence_segment_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SegmentationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SegmentationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Segment Evidence"
       }
     }
   }

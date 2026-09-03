@@ -399,6 +399,8 @@ MAX_INDICATORS: int = 1000
 MAX_ENRICHMENT: int = 1000
 MAX_PARSER_WARNINGS: int = 200
 MAX_FINDINGS: int = 500
+MAX_NESTED_MESSAGES: int = 10
+MAX_CONTAINER_MESSAGES: int = 500
 
 
 class Finding(ContractModel):
@@ -439,9 +441,33 @@ class ScoreBreakdown(ContractModel):
         return self
 
 
+class NestedMessageObservation(ContractModel):
+    path: str = Field(min_length=1, max_length=80)
+    depth: int = Field(ge=1, le=10)
+    sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    byte_size: int | None = Field(default=None, ge=0)
+    headers: list[HeaderObservation] = Field(default_factory=list, max_length=MAX_HEADERS)
+    addresses: list[AddressObservation] = Field(default_factory=list, max_length=MAX_ADDRESSES)
+    received_hops: list[ReceivedHop] = Field(default_factory=list, max_length=MAX_RECEIVED_HOPS)
+    authentication: list[AuthenticationObservation] = Field(default_factory=list, max_length=MAX_AUTHENTICATION)
+    mime_parts: list[MimePartObservation] = Field(default_factory=list, max_length=MAX_MIME_PARTS)
+    indicators: list[IndicatorObservation] = Field(default_factory=list, max_length=MAX_INDICATORS)
+    parser_warnings: list[str] = Field(default_factory=list, max_length=MAX_PARSER_WARNINGS)
+    identity_observations: list[IdentityObservation] = Field(default_factory=list, max_length=MAX_ADDRESSES)
+    date_observations: list[DateObservation] = Field(default_factory=list, max_length=MAX_HEADERS)
+    message_id_observations: list[MessageIdObservation] = Field(default_factory=list, max_length=MAX_HEADERS)
+    content_indicators: list[ContentIndicatorObservation] = Field(default_factory=list, max_length=MAX_INDICATORS)
+    link_mismatches: list[LinkMismatchObservation] = Field(default_factory=list, max_length=MAX_INDICATORS)
+    routing_anomalies: list[RoutingAnomalyObservation] = Field(default_factory=list, max_length=MAX_RECEIVED_HOPS)
+    auth_conflicts: list[AuthConflictObservation] = Field(default_factory=list, max_length=MAX_AUTHENTICATION)
+    findings: list[Finding] = Field(default_factory=list, max_length=MAX_FINDINGS)
+    score: ScoreBreakdown
+    verdict: VerdictValue
+
+
 class AnalysisResult(ContractModel):
-    schema_version: str = Field(default="1.0.0", min_length=1, max_length=20)
-    ruleset_version: str = Field(default="1.0.0", min_length=1, max_length=80)
+    schema_version: str = Field(default="1.2.0", min_length=1, max_length=20)
+    ruleset_version: str = Field(default="v1.2.0", min_length=1, max_length=80)
     analysis_version: str = Field(min_length=1, max_length=80)
     analysis_run_id: str = Field(min_length=1, max_length=160)
     organization_id: str = Field(min_length=1, max_length=160)
@@ -469,6 +495,8 @@ class AnalysisResult(ContractModel):
     verdict: VerdictValue
     confidence: float = Field(ge=0.0, le=1.0)
     analyzed_at: datetime
+    container_suspected: bool = False
+    nested_messages: list[NestedMessageObservation] = Field(default_factory=list, max_length=MAX_NESTED_MESSAGES)
 
     @field_validator("analyzed_at")
     @classmethod
@@ -507,8 +535,71 @@ class AnalysisResult(ContractModel):
         return self
 
 
+class ContainerFormat(StrEnum):
+    MBOX = "mbox"
+    BARE_CONCATENATION = "bare_concatenation"
+    MULTIPART_DIGEST = "multipart/digest"
+    SINGLE = "single"
+
+
+class ContainerMessageSummary(ContractModel):
+    from_address: str | None = Field(default=None, max_length=320)
+    from_display_name: str | None = Field(default=None, max_length=320)
+    subject: str | None = Field(default=None, max_length=500)
+    date: datetime | None = None
+    message_id: str | None = Field(default=None, max_length=500)
+
+    @field_validator("date")
+    @classmethod
+    def validate_summary_date(cls, v: datetime | None) -> datetime | None:
+        return validate_hop_timestamp(v)
+
+
+class ContainerSegment(ContractModel):
+    index: int = Field(ge=0, le=100_000)
+    byte_offset: int = Field(ge=0)
+    byte_length: int = Field(gt=0)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    summary: ContainerMessageSummary = Field(default_factory=ContainerMessageSummary)
+
+
+class SegmentationResult(ContractModel):
+    container_format: ContainerFormat
+    message_count: int = Field(ge=0)
+    segments: list[ContainerSegment] = Field(default_factory=list)
+
+
+class SegmentationRequest(ContractModel):
+    case_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9_-]+$")
+    organization_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9_-]+$")
+    evidence_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9_-]+$")
+    object_key: str = Field(
+        min_length=1,
+        max_length=500,
+        pattern=r"^organizations/[A-Za-z0-9_-]+/cases/[A-Za-z0-9_-]+/artifacts/[A-Za-z0-9_-]+(?:\.[a-zA-Z0-9]+)?$",
+    )
+    sha256: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+    byte_size: int = Field(gt=0, le=536_870_912)
+
+    @model_validator(mode="after")
+    def artifact_matches_scope(self) -> SegmentationRequest:
+        expected_prefix = f"organizations/{self.organization_id}/cases/{self.case_id}/artifacts/"
+        if not self.object_key.startswith(expected_prefix):
+            raise ValueError("artifact object key does not match organization and case")
+        return self
+
+
 AnalysisStatus.model_rebuild()
+NestedMessageObservation.model_rebuild()
 AnalysisResult.model_rebuild()
+ContainerMessageSummary.model_rebuild()
+ContainerSegment.model_rebuild()
+SegmentationResult.model_rebuild()
+SegmentationRequest.model_rebuild()
 
 # Compatibility aliases for integrations that use generic observation names.
 ContentObservation = ContentIndicatorObservation

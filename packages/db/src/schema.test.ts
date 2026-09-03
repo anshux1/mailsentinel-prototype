@@ -41,6 +41,44 @@ describe("schema structural integrity", () => {
 		expect(cols.verifiedAt).toBeDefined();
 		expect(cols.failedAt).toBeDefined();
 		expect(cols.failureReason).toBeDefined();
+		expect(cols.batchId).toBeDefined();
+		expect(cols.sequence).toBeDefined();
+		expect(cols.sourceMessageId).toBeDefined();
+	});
+
+	it("exposes ingestion_batches fields", () => {
+		const cols = schema.ingestionBatches;
+		expect(cols.id).toBeDefined();
+		expect(cols.organizationId).toBeDefined();
+		expect(cols.caseId).toBeDefined();
+		expect(cols.source).toBeDefined();
+		expect(cols.status).toBeDefined();
+		expect(cols.containerEvidenceId).toBeDefined();
+		expect(cols.messageCount).toBeDefined();
+		expect(cols.readyCount).toBeDefined();
+		expect(cols.failedCount).toBeDefined();
+		expect(cols.metadata).toBeDefined();
+		expect(cols.failureReason).toBeDefined();
+		expect(cols.createdAt).toBeDefined();
+		expect(cols.updatedAt).toBeDefined();
+	});
+
+	it("exposes mailbox_connections fields", () => {
+		const cols = schema.mailboxConnections;
+		expect(cols.id).toBeDefined();
+		expect(cols.organizationId).toBeDefined();
+		expect(cols.provider).toBeDefined();
+		expect(cols.accountEmail).toBeDefined();
+		expect(cols.encryptedRefreshToken).toBeDefined();
+		expect(cols.tokenNonce).toBeDefined();
+		expect(cols.scopes).toBeDefined();
+		expect(cols.syncCursor).toBeDefined();
+		expect(cols.status).toBeDefined();
+		expect(cols.lastSyncedAt).toBeDefined();
+		expect(cols.lastFailureReason).toBeDefined();
+		expect(cols.createdByUserId).toBeDefined();
+		expect(cols.createdAt).toBeDefined();
+		expect(cols.updatedAt).toBeDefined();
 	});
 
 	it("exposes reports table with tenant/case/run scope and versioning", () => {
@@ -267,5 +305,140 @@ describe("database constraints and migration verification", () => {
 		expect(indexNames.has("reports_org_run_idx")).toBe(true);
 		expect(indexNames.has("reports_org_status_idx")).toBe(true);
 		expect(indexNames.has("reports_org_run_version_format_uidx")).toBe(true);
+
+		// Batch & mailbox indexes
+		expect(indexNames.has("ingestion_batches_org_case_created_idx")).toBe(true);
+		expect(indexNames.has("ingestion_batches_org_case_idx")).toBe(true);
+		expect(indexNames.has("mailbox_connections_org_provider_email_uidx")).toBe(true);
+		expect(indexNames.has("mailbox_connections_org_idx")).toBe(true);
+		expect(indexNames.has("evidence_org_batch_seq_idx")).toBe(true);
+	});
+
+	it("rejects cross-tenant composite FK violations between cases and ingestion_batches", async () => {
+		const uid = randomUUID().replace(/-/g, "").slice(0, 8);
+		const orgA = `org_a_${uid}`;
+		const orgB = `org_b_${uid}`;
+		const caseA = `case_a_${uid}`;
+		const batchId = `batch_${uid}`;
+
+		await sql`INSERT INTO organizations (id, name) VALUES (${orgA}, 'Org A'), (${orgB}, 'Org B')`;
+		await sql`INSERT INTO cases (id, organization_id, title) VALUES (${caseA}, ${orgA}, 'Case A')`;
+
+		// Attempting to attach batch to orgB while referencing caseA (owned by orgA)
+		await expect(
+			sql`
+				INSERT INTO ingestion_batches (id, organization_id, case_id, source, status)
+				VALUES (${batchId}, ${orgB}, ${caseA}, 'upload_single', 'ready')
+			`,
+		).rejects.toThrow();
+
+		await sql`DELETE FROM organizations WHERE id IN (${orgA}, ${orgB})`;
+	});
+
+	it("rejects cross-tenant composite FK violations between batches and evidence_metadata", async () => {
+		const uid = randomUUID().replace(/-/g, "").slice(0, 8);
+		const orgA = `org_a_${uid}`;
+		const orgB = `org_b_${uid}`;
+		const caseA = `case_a_${uid}`;
+		const caseB = `case_b_${uid}`;
+		const batchA = `batch_a_${uid}`;
+		const evB = `ev_b_${uid}`;
+
+		await sql`INSERT INTO organizations (id, name) VALUES (${orgA}, 'Org A'), (${orgB}, 'Org B')`;
+		await sql`INSERT INTO cases (id, organization_id, title) VALUES (${caseA}, ${orgA}, 'Case A'), (${caseB}, ${orgB}, 'Case B')`;
+		await sql`
+			INSERT INTO ingestion_batches (id, organization_id, case_id, source, status)
+			VALUES (${batchA}, ${orgA}, ${caseA}, 'upload_single', 'ready')
+		`;
+
+		// Attempting to attach evidence under orgB/caseB with batchA owned by orgA/caseA
+		await expect(
+			sql`
+				INSERT INTO evidence_metadata (id, organization_id, case_id, object_key, sha256, byte_size, status, batch_id)
+				VALUES (${evB}, ${orgB}, ${caseB}, ${`key_${uid}`}, 'abc123', 100, 'verified', ${batchA})
+			`,
+		).rejects.toThrow();
+
+		await sql`DELETE FROM organizations WHERE id IN (${orgA}, ${orgB})`;
+	});
+
+	it("rejects duplicate mailbox accounts per organization", async () => {
+		const uid = randomUUID().replace(/-/g, "").slice(0, 8);
+		const orgId = `org_${uid}`;
+		const conn1 = `conn1_${uid}`;
+		const conn2 = `conn2_${uid}`;
+		const email = `security-${uid}@example.com`;
+
+		await sql`INSERT INTO organizations (id, name) VALUES (${orgId}, 'Test Org')`;
+		await sql`
+			INSERT INTO mailbox_connections (id, organization_id, provider, account_email, encrypted_refresh_token, token_nonce)
+			VALUES (${conn1}, ${orgId}, 'gmail', ${email}, 'enc_token_1', 'nonce_1')
+		`;
+
+		// Duplicate provider + account_email for the same organization must fail
+		await expect(
+			sql`
+				INSERT INTO mailbox_connections (id, organization_id, provider, account_email, encrypted_refresh_token, token_nonce)
+				VALUES (${conn2}, ${orgId}, 'gmail', ${email}, 'enc_token_2', 'nonce_2')
+			`,
+		).rejects.toThrow();
+
+		await sql`DELETE FROM organizations WHERE id = ${orgId}`;
+	});
+
+	it("allows rows with batch_id = null to be read and listed without error", async () => {
+		const uid = randomUUID().replace(/-/g, "").slice(0, 8);
+		const orgId = `org_${uid}`;
+		const caseId = `case_${uid}`;
+		const evId = `ev_${uid}`;
+
+		await sql`INSERT INTO organizations (id, name) VALUES (${orgId}, 'Test Org')`;
+		await sql`INSERT INTO cases (id, organization_id, title) VALUES (${caseId}, ${orgId}, 'Case')`;
+		await sql`
+			INSERT INTO evidence_metadata (id, organization_id, case_id, object_key, sha256, byte_size, status, batch_id)
+			VALUES (${evId}, ${orgId}, ${caseId}, ${`key_${uid}`}, 'abc123', 100, 'verified', NULL)
+		`;
+
+		const rows = await sql<{ id: string; batch_id: string | null }[]>`
+			SELECT id, batch_id FROM evidence_metadata WHERE organization_id = ${orgId} AND case_id = ${caseId}
+		`;
+		expect(rows.length).toBe(1);
+		expect(rows[0]?.id).toBe(evId);
+		expect(rows[0]?.batch_id).toBeNull();
+
+		await sql`DELETE FROM organizations WHERE id = ${orgId}`;
+	});
+
+	it("allows pre-existing evidence inserted without batch columns to be read cleanly", async () => {
+		const uid = randomUUID().replace(/-/g, "").slice(0, 8);
+		const orgId = `org_${uid}`;
+		const caseId = `case_${uid}`;
+		const evId = `ev_legacy_${uid}`;
+
+		await sql`INSERT INTO organizations (id, name) VALUES (${orgId}, 'Legacy Org')`;
+		await sql`INSERT INTO cases (id, organization_id, title) VALUES (${caseId}, ${orgId}, 'Legacy Case')`;
+		// Legacy insert omitting batch_id, sequence, source_message_id entirely
+		await sql`
+			INSERT INTO evidence_metadata (id, organization_id, case_id, object_key, sha256, byte_size, status)
+			VALUES (${evId}, ${orgId}, ${caseId}, ${`key_legacy_${uid}`}, 'legacy123', 50, 'verified')
+		`;
+
+		const rows = await sql<
+			{
+				id: string;
+				batch_id: string | null;
+				sequence: number | null;
+				source_message_id: string | null;
+			}[]
+		>`
+			SELECT id, batch_id, sequence, source_message_id FROM evidence_metadata WHERE id = ${evId}
+		`;
+		expect(rows.length).toBe(1);
+		expect(rows[0]?.id).toBe(evId);
+		expect(rows[0]?.batch_id).toBeNull();
+		expect(rows[0]?.sequence).toBeNull();
+		expect(rows[0]?.source_message_id).toBeNull();
+
+		await sql`DELETE FROM organizations WHERE id = ${orgId}`;
 	});
 });

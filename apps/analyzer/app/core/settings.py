@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     enrichment_mode: Literal["fixture", "offline", "live"] = "fixture"
     analysis_version: str = Field(default="prototype-1", min_length=1)
     retention_days: int = Field(default=90, le=3_650)
+    max_container_messages: int = Field(default=500, le=10_000)
+    max_container_bytes: int = Field(default=104_857_600, le=536_870_912)
+    max_nested_message_depth: int = Field(default=3, le=10)
+    max_nested_messages: int = Field(default=10, le=100)
 
     @field_validator(
         "max_eml_bytes",
@@ -48,6 +52,10 @@ class Settings(BaseSettings):
         "max_urls",
         "max_attachment_bytes",
         "retention_days",
+        "max_container_messages",
+        "max_container_bytes",
+        "max_nested_message_depth",
+        "max_nested_messages",
     )
     @classmethod
     def positive_limit(cls, value: int) -> int:

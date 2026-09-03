@@ -6,6 +6,7 @@ import {
 	MemoryAuditRepository,
 	MemoryCaseRepository,
 	MemoryEvidenceRepository,
+	MemoryIngestionBatchRepository,
 	MemoryMembershipRepository,
 } from "@mailsentinel/db";
 import { createRouterClient } from "@orpc/server";
@@ -14,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { env } from "@/env";
+import { MemoryAnalyzerClient } from "@/server/analyzer-client";
 import { logger } from "@/server/logger";
 import { MemoryEvidenceStorage } from "@/server/storage/s3";
 import type { RpcContext } from "./context";
@@ -99,9 +101,11 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 		const evidenceList: EvidenceShell[] = [];
 		const caseRepo = new MemoryCaseRepository(cases);
 		const evidenceRepo = new MemoryEvidenceRepository(evidenceList, cases);
+		const batchRepo = new MemoryIngestionBatchRepository([], cases);
 		const auditRepo = new MemoryAuditRepository([]);
 		const membershipRepo = new MemoryMembershipRepository(memberships);
 		const storage = new MemoryEvidenceStorage();
+		const analyzerClient = new MemoryAnalyzerClient();
 
 		const context: RpcContext = {
 			requestId: "req_s4_test",
@@ -111,10 +115,12 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			repos: {
 				cases: caseRepo,
 				evidence: evidenceRepo,
+				batches: batchRepo,
 				audit: auditRepo,
 				memberships: membershipRepo,
 			},
 			storage,
+			analyzerClient,
 			...overrides,
 		};
 
@@ -125,8 +131,10 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			client,
 			caseRepo,
 			evidenceRepo,
+			batchRepo,
 			auditRepo,
 			storage,
+			analyzerClient,
 		};
 	}
 
@@ -226,7 +234,10 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			const audits = await auditRepo.listAuditRecords({
 				organizationId: "org_alpha",
 			});
-			expect(audits).toHaveLength(2);
+			const evidenceAudits = audits.filter(
+				(a) => a.resourceType === "evidence",
+			);
+			expect(evidenceAudits).toHaveLength(2);
 
 			const initAudit = audits.find((a) => a.action === "evidence.upload_init");
 			expect(initAudit).toBeDefined();
@@ -1023,7 +1034,10 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 					contentType: "message/rfc822",
 					status: "verified",
 					idempotencyKey: "secret_idem_key",
-					storedAt: new Date(),
+					batchId: null,
+					sequence: null,
+					sourceMessageId: null,
+					storedAt: new Date("2026-09-01T10:05:00Z"),
 					verifiedAt: new Date(),
 					failedAt: null,
 					failureReason: null,
@@ -1501,6 +1515,305 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 				evidenceId: pending.id,
 			});
 			expect(persisted?.status).toBe("verified");
+		});
+	});
+
+	describe("10. Phase S11 Container Ingestion & Segmentation Pipeline", () => {
+		it("single-message upload creates an upload_single batch in ready status", async () => {
+			const { client, batchRepo } = setupTest();
+			const pending = await client.evidence.createUpload({
+				caseId: "case_alpha_1",
+				byteSize: sampleByteSize,
+				sha256: sampleSha256,
+			});
+
+			const completed = await client.evidence.completeUpload({
+				caseId: "case_alpha_1",
+				evidenceId: pending.id,
+				body: sampleBase64,
+			});
+			expect(completed.status).toBe("verified");
+
+			const batches = await batchRepo.listBatchesByCase({
+				organizationId: "org_alpha",
+				caseId: "case_alpha_1",
+			});
+			expect(batches).toHaveLength(1);
+			expect(batches[0]?.source).toBe("upload_single");
+			expect(batches[0]?.status).toBe("ready");
+			expect(batches[0]?.containerEvidenceId).toBe(pending.id);
+			expect(batches[0]?.messageCount).toBe(1);
+		});
+
+		it("multi-message container upload segments raw bytes, writes child objects under deterministic keys, and creates verified child evidence", async () => {
+			const {
+				client,
+				analyzerClient,
+				batchRepo,
+				evidenceRepo,
+				storage,
+				auditRepo,
+			} = setupTest();
+
+			// Mock analyzer segmentation result with 2 messages in an mbox container
+			const msg1Content = "From: a@example.com\r\nSubject: M1\r\n\r\nBody 1";
+			const msg2Content = "From: b@example.com\r\nSubject: M2\r\n\r\nBody 2";
+			const combined = `${msg1Content}\n${msg2Content}`;
+			const combinedBuf = Buffer.from(combined, "utf-8");
+			const combinedSha = createHash("sha256")
+				.update(combinedBuf)
+				.digest("hex")
+				.toLowerCase();
+
+			analyzerClient.segmentResult = {
+				containerFormat: "mbox",
+				messageCount: 2,
+				segments: [
+					{
+						index: 0,
+						byteOffset: 0,
+						byteLength: Buffer.byteLength(msg1Content),
+						sha256: createHash("sha256").update(msg1Content).digest("hex"),
+						summary: {
+							messageId: "<msg1@example.com>",
+							subject: null,
+							date: null,
+							fromAddress: null,
+							fromDisplayName: null,
+						},
+					},
+					{
+						index: 1,
+						byteOffset: Buffer.byteLength(msg1Content) + 1,
+						byteLength: Buffer.byteLength(msg2Content),
+						sha256: createHash("sha256").update(msg2Content).digest("hex"),
+						summary: {
+							messageId: "<msg2@example.com>",
+							subject: null,
+							date: null,
+							fromAddress: null,
+							fromDisplayName: null,
+						},
+					},
+				],
+			};
+
+			const pending = await client.evidence.createUpload({
+				caseId: "case_alpha_1",
+				byteSize: combinedBuf.byteLength,
+				sha256: combinedSha,
+			});
+
+			const completed = await client.evidence.completeUpload({
+				caseId: "case_alpha_1",
+				evidenceId: pending.id,
+				body: combinedBuf.toString("base64"),
+			});
+			expect(completed.status).toBe("verified");
+
+			// Check batch was transitioned to ready
+			const batches = await batchRepo.listBatchesByCase({
+				organizationId: "org_alpha",
+				caseId: "case_alpha_1",
+			});
+			expect(batches).toHaveLength(1);
+			const batch = batches[0]!;
+			expect(batch.source).toBe("upload_container");
+			expect(batch.status).toBe("ready");
+			expect(batch.messageCount).toBe(2);
+			expect(batch.readyCount).toBe(2);
+
+			// Check child evidence rows
+			const children = await evidenceRepo.listEvidenceByBatch({
+				organizationId: "org_alpha",
+				batchId: batch.id,
+			});
+			expect(children).toHaveLength(2);
+			expect(children[0]?.sequence).toBe(0);
+			expect(children[0]?.sourceMessageId).toBe("<msg1@example.com>");
+			expect(children[1]?.sequence).toBe(1);
+			expect(children[1]?.sourceMessageId).toBe("<msg2@example.com>");
+
+			// Check children are saved in storage under deterministic keys
+			expect(storage.hasObject(children[0]!.objectKey)).toBe(true);
+			expect(storage.hasObject(children[1]!.objectKey)).toBe(true);
+
+			// Check evidence.listByBatch API procedure
+			const listResult = await client.evidence.listByBatch({
+				batchId: batch.id,
+			});
+			expect(listResult.items).toHaveLength(2);
+			expect(listResult.items[0]?.sequence).toBe(0);
+			expect(listResult.items[1]?.sequence).toBe(1);
+
+			// Check audit trail
+			const audits = await auditRepo.listAuditRecords({
+				organizationId: "org_alpha",
+			});
+			expect(audits.some((a) => a.action === "batch.created")).toBe(true);
+			expect(
+				audits.some((a) => a.action === "evidence.container_segmented"),
+			).toBe(true);
+			expect(audits.some((a) => a.action === "evidence.child_registered")).toBe(
+				true,
+			);
+			expect(audits.some((a) => a.action === "batch.completed")).toBe(true);
+		});
+
+		it("re-uploading the same container digest is idempotent and does not duplicate children", async () => {
+			const { client, analyzerClient, batchRepo, evidenceRepo } = setupTest();
+
+			const msg1Content = "From: a@example.com\r\n\r\nHello";
+			const msg2Content = "From: b@example.com\r\n\r\nWorld";
+			const combined = `${msg1Content}\n${msg2Content}`;
+			const combinedBuf = Buffer.from(combined, "utf-8");
+			const combinedSha = createHash("sha256")
+				.update(combinedBuf)
+				.digest("hex");
+
+			analyzerClient.segmentResult = {
+				containerFormat: "mbox",
+				messageCount: 2,
+				segments: [
+					{
+						index: 0,
+						byteOffset: 0,
+						byteLength: Buffer.byteLength(msg1Content),
+						sha256: createHash("sha256").update(msg1Content).digest("hex"),
+					},
+					{
+						index: 1,
+						byteOffset: Buffer.byteLength(msg1Content) + 1,
+						byteLength: Buffer.byteLength(msg2Content),
+						sha256: createHash("sha256").update(msg2Content).digest("hex"),
+					},
+				],
+			};
+
+			const pending = await client.evidence.createUpload({
+				caseId: "case_alpha_1",
+				byteSize: combinedBuf.byteLength,
+				sha256: combinedSha,
+			});
+
+			await client.evidence.completeUpload({
+				caseId: "case_alpha_1",
+				evidenceId: pending.id,
+				body: combinedBuf.toString("base64"),
+			});
+
+			// Re-call completeUpload
+			const reCompleted = await client.evidence.completeUpload({
+				caseId: "case_alpha_1",
+				evidenceId: pending.id,
+				body: combinedBuf.toString("base64"),
+			});
+			expect(reCompleted.status).toBe("verified");
+
+			const batches = await batchRepo.listBatchesByCase({
+				organizationId: "org_alpha",
+				caseId: "case_alpha_1",
+			});
+			expect(batches).toHaveLength(1);
+
+			const children = await evidenceRepo.listEvidenceByBatch({
+				organizationId: "org_alpha",
+				batchId: batches[0]!.id,
+			});
+			expect(children).toHaveLength(2); // Still 2, not duplicated!
+		});
+
+		it("analyzer unavailable safely degrades to single evidence without failing upload", async () => {
+			const { client, analyzerClient, batchRepo } = setupTest();
+			analyzerClient.simulateSegmentStatus = 503;
+
+			const pending = await client.evidence.createUpload({
+				caseId: "case_alpha_1",
+				byteSize: sampleByteSize,
+				sha256: sampleSha256,
+			});
+
+			const completed = await client.evidence.completeUpload({
+				caseId: "case_alpha_1",
+				evidenceId: pending.id,
+				body: sampleBase64,
+			});
+			expect(completed.status).toBe("verified");
+
+			// Should have created an upload_single batch with degraded metadata
+			const batches = await batchRepo.listBatchesByCase({
+				organizationId: "org_alpha",
+				caseId: "case_alpha_1",
+			});
+			expect(batches).toHaveLength(1);
+			expect(batches[0]?.source).toBe("upload_single");
+			expect(batches[0]?.status).toBe("ready");
+		});
+
+		it("storage failure during child upload cleans up written objects and marks batch failed", async () => {
+			const { client, analyzerClient, batchRepo, storage, auditRepo } =
+				setupTest();
+
+			analyzerClient.segmentResult = {
+				containerFormat: "mbox",
+				messageCount: 2,
+				segments: [
+					{
+						index: 0,
+						byteOffset: 0,
+						byteLength: 5,
+						sha256: "a".repeat(64),
+					},
+					{
+						index: 1,
+						byteOffset: 6,
+						byteLength: 5,
+						sha256: "b".repeat(64),
+					},
+				],
+			};
+
+			const body = Buffer.from("12345\n67890");
+			const sha = createHash("sha256").update(body).digest("hex");
+
+			const pending = await client.evidence.createUpload({
+				caseId: "case_alpha_1",
+				byteSize: body.byteLength,
+				sha256: sha,
+			});
+
+			// Make the second child put fail
+			let putCount = 0;
+			const origPut = storage.putEvidence.bind(storage);
+			storage.putEvidence = async (params) => {
+				putCount++;
+				if (putCount === 3) {
+					// 1st put is container, 2nd is child 0, 3rd is child 1 -> fail child 1
+					throw new Error("S3 simulated disk full");
+				}
+				return origPut(params);
+			};
+
+			await expect(
+				client.evidence.completeUpload({
+					caseId: "case_alpha_1",
+					evidenceId: pending.id,
+					body: body.toString("base64"),
+				}),
+			).rejects.toThrow();
+
+			const batches = await batchRepo.listBatchesByCase({
+				organizationId: "org_alpha",
+				caseId: "case_alpha_1",
+			});
+			expect(batches).toHaveLength(1);
+			expect(batches[0]?.status).toBe("failed");
+
+			// Audit event for batch.failed was recorded
+			const audits = await auditRepo.listAuditRecords({
+				organizationId: "org_alpha",
+			});
+			expect(audits.some((a) => a.action === "batch.failed")).toBe(true);
 		});
 	});
 });

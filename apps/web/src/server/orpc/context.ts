@@ -11,6 +11,7 @@ import { auth } from "@/server/auth";
 import type { MembershipRole } from "@/server/auth/permissions";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
+import type { GmailClient } from "@/server/mailbox/types";
 import type { ReportStorage } from "@/server/storage/reports";
 import type { EvidenceStorage } from "@/server/storage/s3";
 
@@ -46,6 +47,7 @@ export type RpcContext = {
 	storage?: EvidenceStorage;
 	reportStorage?: ReportStorage;
 	analyzerClient?: AnalyzerClient;
+	gmailClient?: GmailClient;
 	executeTx?: TransactionExecutor;
 	now?: () => Date;
 };
@@ -106,6 +108,7 @@ export async function createRpcContext(
 		storage?: EvidenceStorage;
 		reportStorage?: ReportStorage;
 		analyzerClient?: AnalyzerClient;
+		gmailClient?: GmailClient;
 		executeTx?: TransactionExecutor;
 		now?: () => Date;
 	},
@@ -128,6 +131,7 @@ export async function createRpcContext(
 			storage: dependencies?.storage,
 			reportStorage: dependencies?.reportStorage,
 			analyzerClient: dependencies?.analyzerClient,
+			gmailClient: dependencies?.gmailClient,
 			executeTx: dependencies?.executeTx,
 			now: dependencies?.now,
 		};
@@ -239,6 +243,7 @@ export async function createRpcContext(
 		storage: dependencies?.storage,
 		reportStorage: dependencies?.reportStorage,
 		analyzerClient: dependencies?.analyzerClient,
+		gmailClient: dependencies?.gmailClient,
 		executeTx: dependencies?.executeTx,
 		now: dependencies?.now,
 	};

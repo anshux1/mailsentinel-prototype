@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import threading
+from collections.abc import Callable
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -19,10 +20,16 @@ from app.contracts.models import (
     AnalysisResult,
     AnalysisStatus,
     AnalysisStatusValue,
+    SegmentationRequest,
+    SegmentationResult,
 )
 from app.core.logging import get_structured_logger, log_event, request_id_context, safe_request_id
 from app.core.settings import Settings, get_settings
+from app.parsing.parser import ParseLimitError
+from app.persistence.interfaces import EvidenceStore
 from app.persistence.postgres import PostgresAnalysisRepository
+from app.persistence.s3 import S3EvidenceStore
+from app.segmentation import segment
 from app.tasks.broker import process_analysis
 
 app = FastAPI(title="MailSentinel Analyzer", version="prototype-1")
@@ -218,3 +225,101 @@ def analysis_result(analysis_run_id: str) -> AnalysisResult:
     if current_status is None:
         raise HTTPException(status_code=404, detail="analysis not found")
     raise HTTPException(status_code=409, detail="analysis result is not ready")
+
+
+def get_evidence_store() -> EvidenceStore:
+    return S3EvidenceStore(get_settings())
+
+
+def _run_segment_with_watchdog(
+    callback: Callable[[], SegmentationResult],
+    timeout_seconds: float,
+) -> SegmentationResult:
+    result: list[SegmentationResult] = []
+    error: list[BaseException] = []
+
+    def target() -> None:
+        try:
+            result.append(callback())
+        except BaseException as exc:  # noqa: BLE001
+            error.append(exc)
+
+    worker = threading.Thread(target=target, name="mailsentinel-segment", daemon=True)
+    worker.start()
+    worker.join(timeout=max(0.001, timeout_seconds))
+    if worker.is_alive():
+        raise TimeoutError("segmentation exceeded configured watchdog")
+    if error:
+        raise error[0]
+    if not result:
+        raise RuntimeError("segmentation returned no result")
+    return result[0]
+
+
+@app.post(
+    "/v1/evidence/segment",
+    response_model=SegmentationResult,
+    dependencies=[Depends(require_internal_token)],
+)
+def segment_evidence(
+    payload: SegmentationRequest,
+    evidence_store: Annotated[EvidenceStore, Depends(get_evidence_store)],
+) -> SegmentationResult:
+    settings = get_settings()
+    try:
+        raw = evidence_store.read_verified(
+            payload.object_key,
+            expected_sha256=payload.sha256,
+            expected_size=payload.byte_size,
+            max_bytes=settings.max_container_bytes,
+            expected_scope=(payload.organization_id, payload.case_id),
+        )
+    except ValueError as error:
+        err_msg = str(error)
+        if err_msg == "evidence_not_found":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="evidence not found") from None
+        if err_msg == "evidence_storage_unavailable":
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="evidence storage unavailable"
+            ) from None
+        if err_msg == "evidence_too_large":
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="evidence too large") from None
+        if err_msg in ("evidence_digest_mismatch", "evidence_size_mismatch"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_msg.replace("_", " ")) from None
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage verification failed"
+        ) from None
+
+    def execute_segment() -> SegmentationResult:
+        return segment(
+            raw,
+            max_container_bytes=settings.max_container_bytes,
+            max_container_messages=settings.max_container_messages,
+            max_eml_bytes=settings.max_eml_bytes,
+        )
+
+    try:
+        timeout = getattr(settings, "execution_timeout_seconds", 120.0)
+        res = _run_segment_with_watchdog(execute_segment, timeout)
+    except TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="segmentation execution timed out"
+        ) from None
+    except ParseLimitError as error:
+        if error.code in ("container_too_large", "evidence_too_large"):
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail=str(error)) from None
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from None
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="segmentation failed") from None
+
+    log_event(
+        logger,
+        20,
+        "evidence.segmentation",
+        organizationId=payload.organization_id,
+        caseId=payload.case_id,
+        evidenceId=payload.evidence_id,
+        format=res.container_format.value,
+        messageCount=res.message_count,
+    )
+    return res

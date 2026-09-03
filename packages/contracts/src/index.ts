@@ -46,6 +46,12 @@ export type RoutingAnomalyObservation = components["schemas"]["RoutingAnomalyObs
 export type ScoreBreakdown = components["schemas"]["ScoreBreakdown"];
 export type SeverityValue = components["schemas"]["SeverityValue"];
 export type VerdictValue = components["schemas"]["VerdictValue"];
+export type ContainerFormat = components["schemas"]["ContainerFormat"];
+export type ContainerMessageSummary = components["schemas"]["ContainerMessageSummary"];
+export type ContainerSegment = components["schemas"]["ContainerSegment"];
+export type SegmentationRequest = components["schemas"]["SegmentationRequest"];
+export type SegmentationResult = components["schemas"]["SegmentationResult"];
+export type NestedMessageObservation = components["schemas"]["NestedMessageObservation"];
 
 export type SystemHealth = { ok: boolean; service: string; timestamp: string };
 export type CaseShell = { id: string; organizationId: string; title: string };

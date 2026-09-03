@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import {
@@ -74,12 +74,16 @@ export function areAnalysisResultsIdentical(
 	return canonicalJsonStringify(existing.resultSnapshot) === canonicalJsonStringify(input.resultSnapshot);
 }
 
-export function encodeCursor(createdAt: Date | string, id: string): string {
+export function encodeCursor(createdAt: Date | string, id: string, sequence?: number | null): string {
 	const iso = typeof createdAt === "string" ? createdAt : createdAt.toISOString();
-	return Buffer.from(JSON.stringify({ createdAt: iso, id })).toString("base64url");
+	const payload: { createdAt: string; id: string; sequence?: number } = { createdAt: iso, id };
+	if (sequence !== undefined && sequence !== null) {
+		payload.sequence = sequence;
+	}
+	return Buffer.from(JSON.stringify(payload)).toString("base64url");
 }
 
-export function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
+export function decodeCursor(cursor: string): { createdAt: Date; id: string; sequence?: number | null } | null {
 	try {
 		if (cursor.length === 0 || cursor.length > 1024) return null;
 		const raw = Buffer.from(cursor, "base64url").toString("utf8");
@@ -92,7 +96,10 @@ export function decodeCursor(cursor: string): { createdAt: Date; id: string } | 
 			/^[A-Za-z0-9_-]{1,200}$/.test(value.id)
 		) {
 			const createdAt = new Date(value.createdAt);
-			if (!Number.isNaN(createdAt.getTime())) return { createdAt, id: value.id };
+			if (!Number.isNaN(createdAt.getTime())) {
+				const sequence = typeof value.sequence === "number" && Number.isInteger(value.sequence) ? value.sequence : null;
+				return { createdAt, id: value.id, sequence };
+			}
 		}
 		return null;
 	} catch {
@@ -113,12 +120,18 @@ export type ReportShell = typeof schema.reports.$inferSelect;
 export type AuditRecordShell = typeof schema.auditRecords.$inferSelect;
 export type OrganizationShell = typeof schema.organizations.$inferSelect;
 export type MembershipShell = typeof schema.memberships.$inferSelect;
+export type IngestionBatchShell = typeof schema.ingestionBatches.$inferSelect;
+export type MailboxConnectionShell = typeof schema.mailboxConnections.$inferSelect;
 
 export type AnalysisRunStatus = (typeof schema.analysisRunStatus.enumValues)[number];
 export type AnalysisVerdict = (typeof schema.analysisVerdict.enumValues)[number];
 export type EvidenceStatus = (typeof schema.evidenceStatus.enumValues)[number];
 export type ReportStatus = (typeof schema.reportStatus.enumValues)[number];
 export type ReportFormat = (typeof schema.reportFormat.enumValues)[number];
+export type IngestionBatchSource = (typeof schema.ingestionBatchSource.enumValues)[number];
+export type IngestionBatchStatus = (typeof schema.ingestionBatchStatus.enumValues)[number];
+export type MailboxProvider = (typeof schema.mailboxProvider.enumValues)[number];
+export type MailboxConnectionStatus = (typeof schema.mailboxConnectionStatus.enumValues)[number];
 
 export type CreateCaseInput = TenantContext & { title: string; id?: string };
 
@@ -135,6 +148,105 @@ export interface CreatePendingEvidenceInput extends TenantCaseKey {
 	byteSize: number;
 	contentType?: string;
 	idempotencyKey?: string | null;
+	batchId?: string | null;
+	sequence?: number | null;
+	sourceMessageId?: string | null;
+}
+
+export interface CreateVerifiedEvidenceInput extends TenantCaseKey {
+	id?: string;
+	objectKey: string;
+	sha256: string;
+	byteSize: number;
+	contentType?: string;
+	idempotencyKey?: string | null;
+	batchId?: string | null;
+	sequence?: number | null;
+	sourceMessageId?: string | null;
+}
+
+export interface ListEvidenceByBatchInput extends TenantContext {
+	batchId: string;
+	caseId?: string;
+	limit?: number;
+	cursor?: string | null;
+}
+
+export interface CreateIngestionBatchInput extends TenantCaseKey {
+	id?: string;
+	source: IngestionBatchSource;
+	status?: IngestionBatchStatus;
+	containerEvidenceId?: string | null;
+	messageCount?: number;
+	readyCount?: number;
+	failedCount?: number;
+	metadata?: Record<string, unknown>;
+	failureReason?: string | null;
+}
+
+export interface GetIngestionBatchInput extends TenantContext {
+	batchId: string;
+	caseId?: string;
+}
+
+export interface ListIngestionBatchesInput extends TenantCaseKey {
+	status?: IngestionBatchStatus;
+	limit?: number;
+	offset?: number;
+	cursor?: string | null;
+}
+
+export interface TransitionBatchStatusInput extends TenantContext {
+	batchId: string;
+	caseId?: string;
+	status: IngestionBatchStatus;
+	failureReason?: string | null;
+	metadata?: Record<string, unknown>;
+}
+
+export interface IncrementBatchCountsInput extends TenantContext {
+	batchId: string;
+	caseId?: string;
+	readyIncrement?: number;
+	failedIncrement?: number;
+}
+
+export interface UpsertMailboxConnectionInput extends TenantContext {
+	id?: string;
+	provider: MailboxProvider;
+	accountEmail: string;
+	encryptedRefreshToken: string;
+	tokenNonce: string;
+	scopes?: string | null;
+	syncCursor?: string | null;
+	status?: MailboxConnectionStatus;
+	createdByUserId?: string | null;
+	lastSyncedAt?: Date | null;
+	lastFailureReason?: string | null;
+}
+
+export interface GetMailboxConnectionInput extends TenantContext {
+	connectionId?: string;
+	accountEmail?: string;
+	provider?: MailboxProvider;
+}
+
+export interface ListMailboxConnectionsInput extends TenantContext {
+	limit?: number;
+	offset?: number;
+	cursor?: string | null;
+}
+
+export interface UpdateMailboxCursorAndStatusInput extends TenantContext {
+	connectionId: string;
+	syncCursor?: string | null;
+	status?: MailboxConnectionStatus;
+	lastSyncedAt?: Date | null;
+	lastFailureReason?: string | null;
+}
+
+export interface DeleteMailboxConnectionInput extends TenantContext {
+	connectionId: string;
 }
 
 export interface MarkEvidenceStoredInput extends TenantContext {
@@ -334,11 +446,13 @@ export interface CaseRepository {
 
 export interface EvidenceRepository {
 	createPending(input: CreatePendingEvidenceInput): Promise<EvidenceShell>;
+	createVerified(input: CreateVerifiedEvidenceInput): Promise<EvidenceShell>;
 	markStored(input: MarkEvidenceStoredInput): Promise<EvidenceShell>;
 	markVerified(input: MarkEvidenceVerifiedInput): Promise<EvidenceShell>;
 	markFailed(input: MarkEvidenceFailedInput): Promise<EvidenceShell>;
 	getEvidence(input: GetEvidenceInput): Promise<EvidenceShell | null>;
 	listEvidence(input: ListEvidenceInput): Promise<EvidenceShell[]>;
+	listEvidenceByBatch(input: ListEvidenceByBatchInput): Promise<EvidenceShell[]>;
 }
 
 export interface AnalysisRunRepository {
@@ -364,12 +478,30 @@ export interface AuditRepository {
 	listAuditRecords(input: ListAuditRecordsInput): Promise<AuditRecordShell[]>;
 }
 
+export interface IngestionBatchRepository {
+	createBatch(input: CreateIngestionBatchInput): Promise<IngestionBatchShell>;
+	getBatch(input: GetIngestionBatchInput): Promise<IngestionBatchShell | null>;
+	listBatchesByCase(input: ListIngestionBatchesInput): Promise<IngestionBatchShell[]>;
+	transitionStatus(input: TransitionBatchStatusInput): Promise<IngestionBatchShell>;
+	incrementCounts(input: IncrementBatchCountsInput): Promise<IngestionBatchShell>;
+}
+
+export interface MailboxConnectionRepository {
+	upsertConnection(input: UpsertMailboxConnectionInput): Promise<MailboxConnectionShell>;
+	getConnection(input: GetMailboxConnectionInput): Promise<MailboxConnectionShell | null>;
+	listConnections(input: ListMailboxConnectionsInput): Promise<MailboxConnectionShell[]>;
+	updateCursorAndStatus(input: UpdateMailboxCursorAndStatusInput): Promise<MailboxConnectionShell>;
+	deleteConnection(input: DeleteMailboxConnectionInput): Promise<boolean>;
+}
+
 export interface Repositories {
 	cases: CaseRepository;
 	evidence: EvidenceRepository;
 	analysisRuns: AnalysisRunRepository;
 	reports: ReportRepository;
 	audit: AuditRepository;
+	batches: IngestionBatchRepository;
+	mailbox: MailboxConnectionRepository;
 }
 
 // ---------------------------------------------------------------------------
@@ -492,12 +624,45 @@ export class DrizzleEvidenceRepository implements EvidenceRepository {
 					contentType: input.contentType ?? "message/rfc822",
 					status: "pending",
 					idempotencyKey: input.idempotencyKey ?? null,
+					batchId: input.batchId ?? null,
+					sequence: input.sequence ?? null,
+					sourceMessageId: input.sourceMessageId ?? null,
 				})
 				.returning();
 			if (!created) throw new RepositoryError("Evidence creation returned no record");
 			return created;
 		} catch (err) {
 			mapDatabaseError(err, "createPendingEvidence");
+		}
+	}
+
+	async createVerified(input: CreateVerifiedEvidenceInput): Promise<EvidenceShell> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const now = new Date();
+			const [created] = await this.db
+				.insert(schema.evidenceMetadata)
+				.values({
+					id: input.id ?? `ev_${randomUUID()}`,
+					organizationId: input.organizationId,
+					caseId: input.caseId,
+					objectKey: input.objectKey,
+					sha256: input.sha256,
+					byteSize: input.byteSize,
+					contentType: input.contentType ?? "message/rfc822",
+					status: "verified",
+					storedAt: now,
+					verifiedAt: now,
+					idempotencyKey: input.idempotencyKey ?? null,
+					batchId: input.batchId ?? null,
+					sequence: input.sequence ?? null,
+					sourceMessageId: input.sourceMessageId ?? null,
+				})
+				.returning();
+			if (!created) throw new RepositoryError("Evidence creation returned no record");
+			return created;
+		} catch (err) {
+			mapDatabaseError(err, "createVerifiedEvidence");
 		}
 	}
 
@@ -802,6 +967,70 @@ export class DrizzleEvidenceRepository implements EvidenceRepository {
 			return await query;
 		} catch (err) {
 			mapDatabaseError(err, "listEvidence");
+		}
+	}
+
+	async listEvidenceByBatch(input: ListEvidenceByBatchInput): Promise<EvidenceShell[]> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const conditions = [
+				eq(schema.evidenceMetadata.organizationId, input.organizationId),
+				eq(schema.evidenceMetadata.batchId, input.batchId),
+			];
+			if (input.caseId) {
+				conditions.push(eq(schema.evidenceMetadata.caseId, input.caseId));
+			}
+			if (input.cursor) {
+				const decoded = decodeCursor(input.cursor);
+				if (decoded) {
+					if (decoded.sequence !== null && decoded.sequence !== undefined) {
+						conditions.push(
+							// biome-ignore lint/style/noNonNullAssertion: or() has two concrete predicates here
+							or(
+								gt(schema.evidenceMetadata.sequence, decoded.sequence),
+								and(
+									eq(schema.evidenceMetadata.sequence, decoded.sequence),
+									or(
+										lt(schema.evidenceMetadata.createdAt, decoded.createdAt),
+										and(
+											eq(schema.evidenceMetadata.createdAt, decoded.createdAt),
+											lt(schema.evidenceMetadata.id, decoded.id),
+										),
+									),
+								),
+							)!,
+						);
+					} else {
+						conditions.push(
+							// biome-ignore lint/style/noNonNullAssertion: or() has two concrete predicates here
+							or(
+								lt(schema.evidenceMetadata.createdAt, decoded.createdAt),
+								and(
+									eq(schema.evidenceMetadata.createdAt, decoded.createdAt),
+									lt(schema.evidenceMetadata.id, decoded.id),
+								),
+							)!,
+						);
+					}
+				}
+			}
+			let query = this.db
+				.select()
+				.from(schema.evidenceMetadata)
+				.where(and(...conditions))
+				.orderBy(
+					asc(schema.evidenceMetadata.sequence),
+					desc(schema.evidenceMetadata.createdAt),
+					desc(schema.evidenceMetadata.id),
+				);
+
+			if (input.limit !== undefined) {
+				query = query.limit(input.limit) as typeof query;
+			}
+
+			return await query;
+		} catch (err) {
+			mapDatabaseError(err, "listEvidenceByBatch");
 		}
 	}
 }
@@ -1353,6 +1582,330 @@ export class DrizzleAuditRepository implements AuditRepository {
 	}
 }
 
+export class DrizzleIngestionBatchRepository implements IngestionBatchRepository {
+	constructor(private readonly db: DrizzleClient) {}
+
+	async createBatch(input: CreateIngestionBatchInput): Promise<IngestionBatchShell> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const [created] = await this.db
+				.insert(schema.ingestionBatches)
+				.values({
+					id: input.id ?? `batch_${randomUUID()}`,
+					organizationId: input.organizationId,
+					caseId: input.caseId,
+					source: input.source,
+					status: input.status ?? "pending",
+					containerEvidenceId: input.containerEvidenceId ?? null,
+					messageCount: input.messageCount ?? 0,
+					readyCount: input.readyCount ?? 0,
+					failedCount: input.failedCount ?? 0,
+					metadata: input.metadata ?? {},
+					failureReason: input.failureReason ?? null,
+				})
+				.returning();
+			if (!created) throw new RepositoryError("Batch creation returned no record");
+			return created;
+		} catch (err) {
+			mapDatabaseError(err, "createBatch");
+		}
+	}
+
+	async getBatch(input: GetIngestionBatchInput): Promise<IngestionBatchShell | null> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const conditions = [
+				eq(schema.ingestionBatches.organizationId, input.organizationId),
+				eq(schema.ingestionBatches.id, input.batchId),
+			];
+			if (input.caseId) {
+				conditions.push(eq(schema.ingestionBatches.caseId, input.caseId));
+			}
+			const [row] = await this.db
+				.select()
+				.from(schema.ingestionBatches)
+				.where(and(...conditions))
+				.limit(1);
+			return row ?? null;
+		} catch (err) {
+			mapDatabaseError(err, "getBatch");
+		}
+	}
+
+	async listBatchesByCase(input: ListIngestionBatchesInput): Promise<IngestionBatchShell[]> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const conditions = [
+				eq(schema.ingestionBatches.organizationId, input.organizationId),
+				eq(schema.ingestionBatches.caseId, input.caseId),
+			];
+			if (input.status) {
+				conditions.push(eq(schema.ingestionBatches.status, input.status));
+			}
+			if (input.cursor) {
+				const decoded = decodeCursor(input.cursor);
+				if (decoded) {
+					conditions.push(
+						// biome-ignore lint/style/noNonNullAssertion: or() has two concrete predicates here
+						or(
+							lt(schema.ingestionBatches.createdAt, decoded.createdAt),
+							and(eq(schema.ingestionBatches.createdAt, decoded.createdAt), lt(schema.ingestionBatches.id, decoded.id)),
+						)!,
+					);
+				}
+			}
+
+			let query = this.db
+				.select()
+				.from(schema.ingestionBatches)
+				.where(and(...conditions))
+				.orderBy(desc(schema.ingestionBatches.createdAt), desc(schema.ingestionBatches.id));
+
+			if (input.limit !== undefined) {
+				query = query.limit(input.limit) as typeof query;
+			}
+			if (input.offset !== undefined) {
+				query = query.offset(input.offset) as typeof query;
+			}
+
+			return await query;
+		} catch (err) {
+			mapDatabaseError(err, "listBatchesByCase");
+		}
+	}
+
+	async transitionStatus(input: TransitionBatchStatusInput): Promise<IngestionBatchShell> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const conditions = [
+				eq(schema.ingestionBatches.organizationId, input.organizationId),
+				eq(schema.ingestionBatches.id, input.batchId),
+			];
+			if (input.caseId) {
+				conditions.push(eq(schema.ingestionBatches.caseId, input.caseId));
+			}
+
+			const updateValues: Partial<typeof schema.ingestionBatches.$inferInsert> = {
+				status: input.status,
+				updatedAt: new Date(),
+			};
+			if (input.failureReason !== undefined) {
+				updateValues.failureReason = input.failureReason;
+			}
+			if (input.metadata !== undefined) {
+				updateValues.metadata = input.metadata;
+			}
+
+			const [updated] = await this.db
+				.update(schema.ingestionBatches)
+				.set(updateValues)
+				.where(and(...conditions))
+				.returning();
+
+			if (!updated) {
+				throw new NotFoundError("ingestion_batch", input.batchId, input.organizationId);
+			}
+			return updated;
+		} catch (err) {
+			mapDatabaseError(err, "transitionBatchStatus");
+		}
+	}
+
+	async incrementCounts(input: IncrementBatchCountsInput): Promise<IngestionBatchShell> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const conditions = [
+				eq(schema.ingestionBatches.organizationId, input.organizationId),
+				eq(schema.ingestionBatches.id, input.batchId),
+			];
+			if (input.caseId) {
+				conditions.push(eq(schema.ingestionBatches.caseId, input.caseId));
+			}
+
+			const readyInc = input.readyIncrement ?? 0;
+			const failedInc = input.failedIncrement ?? 0;
+
+			const [updated] = await this.db
+				.update(schema.ingestionBatches)
+				.set({
+					readyCount: sql`${schema.ingestionBatches.readyCount} + ${readyInc}`,
+					failedCount: sql`${schema.ingestionBatches.failedCount} + ${failedInc}`,
+					updatedAt: new Date(),
+				})
+				.where(and(...conditions))
+				.returning();
+
+			if (!updated) {
+				throw new NotFoundError("ingestion_batch", input.batchId, input.organizationId);
+			}
+			return updated;
+		} catch (err) {
+			mapDatabaseError(err, "incrementBatchCounts");
+		}
+	}
+}
+
+export class DrizzleMailboxConnectionRepository implements MailboxConnectionRepository {
+	constructor(private readonly db: DrizzleClient) {}
+
+	async upsertConnection(input: UpsertMailboxConnectionInput): Promise<MailboxConnectionShell> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const id = input.id ?? `conn_${randomUUID()}`;
+			const updateSet: Partial<typeof schema.mailboxConnections.$inferInsert> = {
+				encryptedRefreshToken: input.encryptedRefreshToken,
+				tokenNonce: input.tokenNonce,
+				updatedAt: new Date(),
+			};
+			if (input.scopes !== undefined) updateSet.scopes = input.scopes ?? null;
+			if (input.syncCursor !== undefined) updateSet.syncCursor = input.syncCursor ?? null;
+			if (input.status !== undefined) updateSet.status = input.status;
+			if (input.lastSyncedAt !== undefined) updateSet.lastSyncedAt = input.lastSyncedAt ?? null;
+			if (input.lastFailureReason !== undefined) updateSet.lastFailureReason = input.lastFailureReason ?? null;
+
+			const [upserted] = await this.db
+				.insert(schema.mailboxConnections)
+				.values({
+					id,
+					organizationId: input.organizationId,
+					provider: input.provider,
+					accountEmail: input.accountEmail,
+					encryptedRefreshToken: input.encryptedRefreshToken,
+					tokenNonce: input.tokenNonce,
+					scopes: input.scopes ?? null,
+					syncCursor: input.syncCursor ?? null,
+					status: input.status ?? "connected",
+					createdByUserId: input.createdByUserId ?? null,
+					lastSyncedAt: input.lastSyncedAt ?? null,
+					lastFailureReason: input.lastFailureReason ?? null,
+				})
+				.onConflictDoUpdate({
+					target: [
+						schema.mailboxConnections.organizationId,
+						schema.mailboxConnections.provider,
+						schema.mailboxConnections.accountEmail,
+					],
+					set: updateSet,
+				})
+				.returning();
+			if (!upserted) throw new RepositoryError("Mailbox connection upsert returned no record");
+			return upserted;
+		} catch (err) {
+			mapDatabaseError(err, "upsertMailboxConnection");
+		}
+	}
+
+	async getConnection(input: GetMailboxConnectionInput): Promise<MailboxConnectionShell | null> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const conditions = [eq(schema.mailboxConnections.organizationId, input.organizationId)];
+			if (input.connectionId) {
+				conditions.push(eq(schema.mailboxConnections.id, input.connectionId));
+			}
+			if (input.accountEmail) {
+				conditions.push(eq(schema.mailboxConnections.accountEmail, input.accountEmail));
+			}
+			if (input.provider) {
+				conditions.push(eq(schema.mailboxConnections.provider, input.provider));
+			}
+			const [row] = await this.db
+				.select()
+				.from(schema.mailboxConnections)
+				.where(and(...conditions))
+				.limit(1);
+			return row ?? null;
+		} catch (err) {
+			mapDatabaseError(err, "getMailboxConnection");
+		}
+	}
+
+	async listConnections(input: ListMailboxConnectionsInput): Promise<MailboxConnectionShell[]> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const conditions = [eq(schema.mailboxConnections.organizationId, input.organizationId)];
+			if (input.cursor) {
+				const decoded = decodeCursor(input.cursor);
+				if (decoded) {
+					conditions.push(
+						// biome-ignore lint/style/noNonNullAssertion: or() has two concrete predicates here
+						or(
+							lt(schema.mailboxConnections.createdAt, decoded.createdAt),
+							and(
+								eq(schema.mailboxConnections.createdAt, decoded.createdAt),
+								lt(schema.mailboxConnections.id, decoded.id),
+							),
+						)!,
+					);
+				}
+			}
+			let query = this.db
+				.select()
+				.from(schema.mailboxConnections)
+				.where(and(...conditions))
+				.orderBy(desc(schema.mailboxConnections.createdAt), desc(schema.mailboxConnections.id));
+
+			if (input.limit !== undefined) {
+				query = query.limit(input.limit) as typeof query;
+			}
+			if (input.offset !== undefined) {
+				query = query.offset(input.offset) as typeof query;
+			}
+			return await query;
+		} catch (err) {
+			mapDatabaseError(err, "listMailboxConnections");
+		}
+	}
+
+	async updateCursorAndStatus(input: UpdateMailboxCursorAndStatusInput): Promise<MailboxConnectionShell> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const updateValues: Partial<typeof schema.mailboxConnections.$inferInsert> = {
+				updatedAt: new Date(),
+			};
+			if (input.syncCursor !== undefined) updateValues.syncCursor = input.syncCursor;
+			if (input.status !== undefined) updateValues.status = input.status;
+			if (input.lastSyncedAt !== undefined) updateValues.lastSyncedAt = input.lastSyncedAt;
+			if (input.lastFailureReason !== undefined) updateValues.lastFailureReason = input.lastFailureReason;
+
+			const [updated] = await this.db
+				.update(schema.mailboxConnections)
+				.set(updateValues)
+				.where(
+					and(
+						eq(schema.mailboxConnections.organizationId, input.organizationId),
+						eq(schema.mailboxConnections.id, input.connectionId),
+					),
+				)
+				.returning();
+
+			if (!updated) {
+				throw new NotFoundError("mailbox_connection", input.connectionId, input.organizationId);
+			}
+			return updated;
+		} catch (err) {
+			mapDatabaseError(err, "updateMailboxCursorAndStatus");
+		}
+	}
+
+	async deleteConnection(input: DeleteMailboxConnectionInput): Promise<boolean> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const deleted = await this.db
+				.delete(schema.mailboxConnections)
+				.where(
+					and(
+						eq(schema.mailboxConnections.organizationId, input.organizationId),
+						eq(schema.mailboxConnections.id, input.connectionId),
+					),
+				)
+				.returning();
+			return deleted.length > 0;
+		} catch (err) {
+			mapDatabaseError(err, "deleteMailboxConnection");
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Deterministic Memory Repositories
 // ---------------------------------------------------------------------------
@@ -1427,6 +1980,7 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 	constructor(
 		private readonly records: EvidenceShell[],
 		private readonly cases?: CaseShell[],
+		private readonly batches?: IngestionBatchShell[],
 	) {}
 
 	async createPending(input: CreatePendingEvidenceInput): Promise<EvidenceShell> {
@@ -1438,6 +1992,18 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 				throw new DependencyError(
 					`Case '${input.caseId}' does not exist for organization '${input.organizationId}'`,
 					"cases",
+				);
+			}
+		}
+
+		if (this.batches && input.batchId) {
+			const batchExists = this.batches.some(
+				(b) => b.organizationId === input.organizationId && b.caseId === input.caseId && b.id === input.batchId,
+			);
+			if (!batchExists) {
+				throw new DependencyError(
+					`Batch '${input.batchId}' does not exist for case '${input.caseId}' in organization '${input.organizationId}'`,
+					"ingestion_batches",
 				);
 			}
 		}
@@ -1472,6 +2038,74 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 			verifiedAt: null,
 			failedAt: null,
 			failureReason: null,
+			batchId: input.batchId ?? null,
+			sequence: input.sequence ?? null,
+			sourceMessageId: input.sourceMessageId ?? null,
+			createdAt: now,
+			updatedAt: now,
+		};
+		this.records.push(record);
+		return { ...record };
+	}
+
+	async createVerified(input: CreateVerifiedEvidenceInput): Promise<EvidenceShell> {
+		assertOrganizationId(input.organizationId);
+
+		if (this.cases) {
+			const caseExists = this.cases.some((c) => c.organizationId === input.organizationId && c.id === input.caseId);
+			if (!caseExists) {
+				throw new DependencyError(
+					`Case '${input.caseId}' does not exist for organization '${input.organizationId}'`,
+					"cases",
+				);
+			}
+		}
+
+		if (this.batches && input.batchId) {
+			const batchExists = this.batches.some(
+				(b) => b.organizationId === input.organizationId && b.caseId === input.caseId && b.id === input.batchId,
+			);
+			if (!batchExists) {
+				throw new DependencyError(
+					`Batch '${input.batchId}' does not exist for case '${input.caseId}' in organization '${input.organizationId}'`,
+					"ingestion_batches",
+				);
+			}
+		}
+
+		if (this.records.some((e) => e.objectKey === input.objectKey)) {
+			throw new ConflictError(`Evidence with objectKey '${input.objectKey}' already exists`);
+		}
+
+		if (input.idempotencyKey) {
+			const duplicateIdem = this.records.some(
+				(e) => e.organizationId === input.organizationId && e.idempotencyKey === input.idempotencyKey,
+			);
+			if (duplicateIdem) {
+				throw new ConflictError(
+					`Evidence with idempotencyKey '${input.idempotencyKey}' already exists in organization '${input.organizationId}'`,
+				);
+			}
+		}
+
+		const now = new Date();
+		const record: EvidenceShell = {
+			id: input.id ?? `ev_${randomUUID()}`,
+			organizationId: input.organizationId,
+			caseId: input.caseId,
+			objectKey: input.objectKey,
+			sha256: input.sha256,
+			byteSize: input.byteSize,
+			contentType: input.contentType ?? "message/rfc822",
+			status: "verified",
+			idempotencyKey: input.idempotencyKey ?? null,
+			storedAt: now,
+			verifiedAt: now,
+			failedAt: null,
+			failureReason: null,
+			batchId: input.batchId ?? null,
+			sequence: input.sequence ?? null,
+			sourceMessageId: input.sourceMessageId ?? null,
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -1628,6 +2262,46 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 		});
 
 		if (input.offset !== undefined) list = list.slice(input.offset);
+		if (input.limit !== undefined) list = list.slice(0, input.limit);
+		return list.map((e) => ({ ...e }));
+	}
+
+	async listEvidenceByBatch(input: ListEvidenceByBatchInput): Promise<EvidenceShell[]> {
+		assertOrganizationId(input.organizationId);
+		let list = this.records.filter(
+			(e) =>
+				e.organizationId === input.organizationId &&
+				e.batchId === input.batchId &&
+				(input.caseId ? e.caseId === input.caseId : true),
+		);
+
+		if (input.cursor) {
+			const decoded = decodeCursor(input.cursor);
+			if (decoded) {
+				list = list.filter((e) => {
+					if (decoded.sequence !== null && decoded.sequence !== undefined) {
+						const eSeq = e.sequence ?? 0;
+						if (eSeq > decoded.sequence) return true;
+						if (eSeq < decoded.sequence) return false;
+					}
+					const eTime = e.createdAt.getTime();
+					const cTime = decoded.createdAt.getTime();
+					if (eTime < cTime) return true;
+					if (eTime === cTime && e.id < decoded.id) return true;
+					return false;
+				});
+			}
+		}
+
+		list.sort((a, b) => {
+			const seqA = a.sequence ?? 0;
+			const seqB = b.sequence ?? 0;
+			if (seqA !== seqB) return seqA - seqB;
+			const diff = b.createdAt.getTime() - a.createdAt.getTime();
+			if (diff !== 0) return diff;
+			return b.id.localeCompare(a.id);
+		});
+
 		if (input.limit !== undefined) list = list.slice(0, input.limit);
 		return list.map((e) => ({ ...e }));
 	}
@@ -2122,6 +2796,254 @@ export class MemoryAuditRepository implements AuditRepository {
 	}
 }
 
+export class MemoryIngestionBatchRepository implements IngestionBatchRepository {
+	constructor(
+		private readonly records: IngestionBatchShell[],
+		private readonly cases?: CaseShell[],
+		private readonly evidence?: EvidenceShell[],
+	) {}
+
+	async createBatch(input: CreateIngestionBatchInput): Promise<IngestionBatchShell> {
+		assertOrganizationId(input.organizationId);
+		if (this.cases) {
+			const caseExists = this.cases.some((c) => c.organizationId === input.organizationId && c.id === input.caseId);
+			if (!caseExists) {
+				throw new DependencyError(
+					`Case '${input.caseId}' does not exist for organization '${input.organizationId}'`,
+					"cases",
+				);
+			}
+		}
+
+		if (this.evidence && input.containerEvidenceId) {
+			const evidenceExists = this.evidence.some(
+				(e) => e.organizationId === input.organizationId && e.id === input.containerEvidenceId,
+			);
+			if (!evidenceExists) {
+				throw new DependencyError(
+					`Container evidence '${input.containerEvidenceId}' does not exist for organization '${input.organizationId}'`,
+					"evidence_metadata",
+				);
+			}
+		}
+
+		const now = new Date();
+		const record: IngestionBatchShell = {
+			id: input.id ?? `batch_${randomUUID()}`,
+			organizationId: input.organizationId,
+			caseId: input.caseId,
+			source: input.source,
+			status: input.status ?? "pending",
+			containerEvidenceId: input.containerEvidenceId ?? null,
+			messageCount: input.messageCount ?? 0,
+			readyCount: input.readyCount ?? 0,
+			failedCount: input.failedCount ?? 0,
+			metadata: input.metadata ?? {},
+			failureReason: input.failureReason ?? null,
+			createdAt: now,
+			updatedAt: now,
+		};
+		this.records.push(record);
+		return { ...record };
+	}
+
+	async getBatch(input: GetIngestionBatchInput): Promise<IngestionBatchShell | null> {
+		assertOrganizationId(input.organizationId);
+		const found = this.records.find(
+			(b) =>
+				b.organizationId === input.organizationId &&
+				b.id === input.batchId &&
+				(input.caseId ? b.caseId === input.caseId : true),
+		);
+		return found ? { ...found } : null;
+	}
+
+	async listBatchesByCase(input: ListIngestionBatchesInput): Promise<IngestionBatchShell[]> {
+		assertOrganizationId(input.organizationId);
+		let list = this.records.filter(
+			(b) =>
+				b.organizationId === input.organizationId &&
+				b.caseId === input.caseId &&
+				(!input.status || b.status === input.status),
+		);
+
+		if (input.cursor) {
+			const decoded = decodeCursor(input.cursor);
+			if (decoded) {
+				list = list.filter((b) => {
+					const bTime = b.createdAt.getTime();
+					const cTime = decoded.createdAt.getTime();
+					if (bTime < cTime) return true;
+					if (bTime === cTime && b.id < decoded.id) return true;
+					return false;
+				});
+			}
+		}
+
+		list.sort((a, b) => {
+			const diff = b.createdAt.getTime() - a.createdAt.getTime();
+			if (diff !== 0) return diff;
+			return b.id.localeCompare(a.id);
+		});
+
+		if (input.offset !== undefined) list = list.slice(input.offset);
+		if (input.limit !== undefined) list = list.slice(0, input.limit);
+		return list.map((b) => ({ ...b }));
+	}
+
+	async transitionStatus(input: TransitionBatchStatusInput): Promise<IngestionBatchShell> {
+		assertOrganizationId(input.organizationId);
+		const existing = this.records.find(
+			(b) =>
+				b.organizationId === input.organizationId &&
+				b.id === input.batchId &&
+				(input.caseId ? b.caseId === input.caseId : true),
+		);
+		if (!existing) {
+			throw new NotFoundError("ingestion_batch", input.batchId, input.organizationId);
+		}
+
+		existing.status = input.status;
+		if (input.failureReason !== undefined) existing.failureReason = input.failureReason;
+		if (input.metadata !== undefined) existing.metadata = input.metadata;
+		existing.updatedAt = new Date();
+		return { ...existing };
+	}
+
+	async incrementCounts(input: IncrementBatchCountsInput): Promise<IngestionBatchShell> {
+		assertOrganizationId(input.organizationId);
+		const existing = this.records.find(
+			(b) =>
+				b.organizationId === input.organizationId &&
+				b.id === input.batchId &&
+				(input.caseId ? b.caseId === input.caseId : true),
+		);
+		if (!existing) {
+			throw new NotFoundError("ingestion_batch", input.batchId, input.organizationId);
+		}
+
+		existing.readyCount += input.readyIncrement ?? 0;
+		existing.failedCount += input.failedIncrement ?? 0;
+		existing.updatedAt = new Date();
+		return { ...existing };
+	}
+}
+
+export class MemoryMailboxConnectionRepository implements MailboxConnectionRepository {
+	constructor(private readonly records: MailboxConnectionShell[]) {}
+
+	async upsertConnection(input: UpsertMailboxConnectionInput): Promise<MailboxConnectionShell> {
+		assertOrganizationId(input.organizationId);
+		const existingIndex = this.records.findIndex(
+			(c) =>
+				c.organizationId === input.organizationId &&
+				c.provider === input.provider &&
+				c.accountEmail === input.accountEmail,
+		);
+
+		const now = new Date();
+		if (existingIndex >= 0) {
+			const existing = this.records[existingIndex];
+			if (!existing) {
+				throw new RepositoryError("Mailbox connection record not found");
+			}
+			existing.encryptedRefreshToken = input.encryptedRefreshToken;
+			existing.tokenNonce = input.tokenNonce;
+			if (input.scopes !== undefined) existing.scopes = input.scopes ?? null;
+			if (input.syncCursor !== undefined) existing.syncCursor = input.syncCursor ?? null;
+			if (input.status !== undefined) existing.status = input.status;
+			if (input.lastSyncedAt !== undefined) existing.lastSyncedAt = input.lastSyncedAt ?? null;
+			if (input.lastFailureReason !== undefined) existing.lastFailureReason = input.lastFailureReason ?? null;
+			existing.updatedAt = now;
+			return { ...existing };
+		}
+
+		const record: MailboxConnectionShell = {
+			id: input.id ?? `conn_${randomUUID()}`,
+			organizationId: input.organizationId,
+			provider: input.provider,
+			accountEmail: input.accountEmail,
+			encryptedRefreshToken: input.encryptedRefreshToken,
+			tokenNonce: input.tokenNonce,
+			scopes: input.scopes ?? null,
+			syncCursor: input.syncCursor ?? null,
+			status: input.status ?? "connected",
+			createdByUserId: input.createdByUserId ?? null,
+			lastSyncedAt: input.lastSyncedAt ?? null,
+			lastFailureReason: input.lastFailureReason ?? null,
+			createdAt: now,
+			updatedAt: now,
+		};
+		this.records.push(record);
+		return { ...record };
+	}
+
+	async getConnection(input: GetMailboxConnectionInput): Promise<MailboxConnectionShell | null> {
+		assertOrganizationId(input.organizationId);
+		const found = this.records.find(
+			(c) =>
+				c.organizationId === input.organizationId &&
+				(!input.connectionId || c.id === input.connectionId) &&
+				(!input.accountEmail || c.accountEmail === input.accountEmail) &&
+				(!input.provider || c.provider === input.provider),
+		);
+		return found ? { ...found } : null;
+	}
+
+	async listConnections(input: ListMailboxConnectionsInput): Promise<MailboxConnectionShell[]> {
+		assertOrganizationId(input.organizationId);
+		let list = this.records.filter((c) => c.organizationId === input.organizationId);
+
+		if (input.cursor) {
+			const decoded = decodeCursor(input.cursor);
+			if (decoded) {
+				list = list.filter((c) => {
+					const cTime = c.createdAt.getTime();
+					const curTime = decoded.createdAt.getTime();
+					if (cTime < curTime) return true;
+					if (cTime === curTime && c.id < decoded.id) return true;
+					return false;
+				});
+			}
+		}
+
+		list.sort((a, b) => {
+			const diff = b.createdAt.getTime() - a.createdAt.getTime();
+			if (diff !== 0) return diff;
+			return b.id.localeCompare(a.id);
+		});
+
+		if (input.offset !== undefined) list = list.slice(input.offset);
+		if (input.limit !== undefined) list = list.slice(0, input.limit);
+		return list.map((c) => ({ ...c }));
+	}
+
+	async updateCursorAndStatus(input: UpdateMailboxCursorAndStatusInput): Promise<MailboxConnectionShell> {
+		assertOrganizationId(input.organizationId);
+		const existing = this.records.find((c) => c.organizationId === input.organizationId && c.id === input.connectionId);
+		if (!existing) {
+			throw new NotFoundError("mailbox_connection", input.connectionId, input.organizationId);
+		}
+
+		if (input.syncCursor !== undefined) existing.syncCursor = input.syncCursor;
+		if (input.status !== undefined) existing.status = input.status;
+		if (input.lastSyncedAt !== undefined) existing.lastSyncedAt = input.lastSyncedAt;
+		if (input.lastFailureReason !== undefined) existing.lastFailureReason = input.lastFailureReason;
+		existing.updatedAt = new Date();
+		return { ...existing };
+	}
+
+	async deleteConnection(input: DeleteMailboxConnectionInput): Promise<boolean> {
+		assertOrganizationId(input.organizationId);
+		const index = this.records.findIndex(
+			(c) => c.organizationId === input.organizationId && c.id === input.connectionId,
+		);
+		if (index === -1) return false;
+		this.records.splice(index, 1);
+		return true;
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Memory Repositories Aggregator & Transaction Simulator
 // ---------------------------------------------------------------------------
@@ -2134,6 +3056,8 @@ export interface MemoryState {
 	analysisRuns?: AnalysisRunShell[];
 	reports?: ReportShell[];
 	auditRecords?: AuditRecordShell[];
+	batches?: IngestionBatchShell[];
+	mailboxConnections?: MailboxConnectionShell[];
 }
 
 export class MemoryRepositories implements Repositories {
@@ -2144,6 +3068,8 @@ export class MemoryRepositories implements Repositories {
 	readonly analysisRunsList: AnalysisRunShell[];
 	readonly reportsList: ReportShell[];
 	readonly auditRecordsList: AuditRecordShell[];
+	readonly ingestionBatchesList: IngestionBatchShell[];
+	readonly mailboxConnectionsList: MailboxConnectionShell[];
 
 	readonly organizations: MemoryOrganizationRepository;
 	readonly memberships: MemoryMembershipRepository;
@@ -2152,6 +3078,8 @@ export class MemoryRepositories implements Repositories {
 	readonly analysisRuns: MemoryAnalysisRunRepository;
 	readonly reports: MemoryReportRepository;
 	readonly audit: MemoryAuditRepository;
+	readonly batches: MemoryIngestionBatchRepository;
+	readonly mailbox: MemoryMailboxConnectionRepository;
 
 	constructor(initialState?: MemoryState) {
 		this.organizationsList = [...(initialState?.organizations ?? [])];
@@ -2161,14 +3089,18 @@ export class MemoryRepositories implements Repositories {
 		this.analysisRunsList = [...(initialState?.analysisRuns ?? [])];
 		this.reportsList = [...(initialState?.reports ?? [])];
 		this.auditRecordsList = [...(initialState?.auditRecords ?? [])];
+		this.ingestionBatchesList = [...(initialState?.batches ?? [])];
+		this.mailboxConnectionsList = [...(initialState?.mailboxConnections ?? [])];
 
 		this.organizations = new MemoryOrganizationRepository(this.organizationsList);
 		this.memberships = new MemoryMembershipRepository(this.membershipsList);
 		this.cases = new MemoryCaseRepository(this.casesList);
-		this.evidence = new MemoryEvidenceRepository(this.evidenceList, this.casesList);
+		this.evidence = new MemoryEvidenceRepository(this.evidenceList, this.casesList, this.ingestionBatchesList);
 		this.analysisRuns = new MemoryAnalysisRunRepository(this.analysisRunsList, this.casesList, this.evidenceList);
 		this.reports = new MemoryReportRepository(this.reportsList, this.casesList, this.analysisRunsList);
 		this.audit = new MemoryAuditRepository(this.auditRecordsList);
+		this.batches = new MemoryIngestionBatchRepository(this.ingestionBatchesList, this.casesList, this.evidenceList);
+		this.mailbox = new MemoryMailboxConnectionRepository(this.mailboxConnectionsList);
 	}
 
 	snapshot(): MemoryState {
@@ -2183,6 +3115,8 @@ export class MemoryRepositories implements Repositories {
 			})),
 			reports: this.reportsList.map((x) => ({ ...x, metadata: { ...x.metadata } })),
 			auditRecords: this.auditRecordsList.map((x) => ({ ...x, metadata: { ...x.metadata } })),
+			batches: this.ingestionBatchesList.map((x) => ({ ...x, metadata: { ...x.metadata } })),
+			mailboxConnections: this.mailboxConnectionsList.map((x) => ({ ...x })),
 		};
 	}
 
@@ -2201,6 +3135,10 @@ export class MemoryRepositories implements Repositories {
 		this.reportsList.push(...(snapshot.reports ?? []));
 		this.auditRecordsList.length = 0;
 		this.auditRecordsList.push(...(snapshot.auditRecords ?? []));
+		this.ingestionBatchesList.length = 0;
+		this.ingestionBatchesList.push(...(snapshot.batches ?? []));
+		this.mailboxConnectionsList.length = 0;
+		this.mailboxConnectionsList.push(...(snapshot.mailboxConnections ?? []));
 	}
 
 	async transaction<T>(fn: (repos: Repositories) => Promise<T>): Promise<T> {
@@ -2225,6 +3163,8 @@ export function createDrizzleRepositories(db: DrizzleClient): Repositories {
 		analysisRuns: new DrizzleAnalysisRunRepository(db),
 		reports: new DrizzleReportRepository(db),
 		audit: new DrizzleAuditRepository(db),
+		batches: new DrizzleIngestionBatchRepository(db),
+		mailbox: new DrizzleMailboxConnectionRepository(db),
 	};
 }
 
@@ -2261,6 +3201,9 @@ export interface CreateEvidenceWithRunAndAuditInput extends TenantCaseKey {
 		contentType?: string;
 		idempotencyKey?: string | null;
 		status?: EvidenceStatus;
+		batchId?: string | null;
+		sequence?: number | null;
+		sourceMessageId?: string | null;
 	};
 	run?: {
 		id?: string;
@@ -2296,6 +3239,9 @@ export async function createEvidenceWithRunAndAudit(
 		byteSize: input.evidence.byteSize,
 		contentType: input.evidence.contentType,
 		idempotencyKey: input.evidence.idempotencyKey,
+		batchId: input.evidence.batchId,
+		sequence: input.evidence.sequence,
+		sourceMessageId: input.evidence.sourceMessageId,
 	});
 
 	if (input.evidence.status === "stored") {

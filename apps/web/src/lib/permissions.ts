@@ -17,7 +17,8 @@ export type Permission =
 	| "reports:read"
 	| "reports:generate"
 	| "retention:manage"
-	| "admin:manage";
+	| "admin:manage"
+	| "mailbox:manage";
 
 export const ROLE_HIERARCHY: Record<MembershipRole, number> = {
 	viewer: 1,
@@ -49,6 +50,7 @@ export const ROLE_PERMISSIONS: Record<MembershipRole, readonly Permission[]> = {
 		"analysis:retry",
 		"retention:manage",
 		"admin:manage",
+		"mailbox:manage",
 	],
 };
 

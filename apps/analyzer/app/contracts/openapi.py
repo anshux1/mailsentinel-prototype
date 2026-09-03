@@ -36,7 +36,12 @@ def get_analyzer_contract_models() -> list[type[BaseModel]]:
         m.AuthConflictObservation,
         m.Finding,
         m.ScoreBreakdown,
+        m.NestedMessageObservation,
         m.AnalysisResult,
+        m.ContainerMessageSummary,
+        m.ContainerSegment,
+        m.SegmentationResult,
+        m.SegmentationRequest,
     ]
 
 

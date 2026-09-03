@@ -18,6 +18,7 @@ from app.contracts.models import (
     LinkMismatchObservation,
     MessageIdObservation,
     MimePartObservation,
+    NestedMessageObservation,
     ReceivedHop,
     RoutingAnomalyObservation,
     ScoreBreakdown,
@@ -25,7 +26,7 @@ from app.contracts.models import (
     VerdictValue,
 )
 
-RULESET_VERSION: str = "1.1.0"
+RULESET_VERSION: str = "v1.2.0"
 _SENDER_SOURCES = {"from", "sender", "reply-to", "return-path"}
 _HIGH_RISK_COUNTRIES = {"BY", "IR", "KP", "NG", "RU", "SY"}
 _HIGH_RISK_ASNS = {"AS4134", "AS4837", "AS9009", "AS16276", "AS14061"}
@@ -190,6 +191,7 @@ def score_findings(
     link_mismatches: Sequence[LinkMismatchObservation] = (),
     routing_anomalies: Sequence[RoutingAnomalyObservation] = (),
     auth_conflicts: Sequence[AuthConflictObservation] = (),
+    nested_messages: Sequence[NestedMessageObservation] = (),
 ) -> ScoreBreakdown:
     findings: list[Finding] = []
     sender_domains = _sender_domains(addresses)
@@ -496,6 +498,38 @@ def score_findings(
                         [f"{ind[:120]}:country={country}"],
                     )
                 )
+
+    nested_malicious_count = 0
+    nested_suspicious_count = 0
+    for nested in nested_messages:
+        if nested.verdict == VerdictValue.MALICIOUS:
+            nested_malicious_count += 1
+            points = 35 if nested_malicious_count == 1 else (5 if nested_malicious_count == 2 else 0)
+            findings.append(
+                _finding(
+                    "nested.malicious_forwarded_message",
+                    FindingCategory.CONTENT,
+                    SeverityValue.MEDIUM,
+                    points,
+                    f"Nested message at MIME path '{nested.path}' was evaluated as malicious.",
+                    "nested_message",
+                    evidence_refs=[nested.path, f"verdict:{nested.verdict.value}"],
+                )
+            )
+        elif nested.verdict == VerdictValue.SUSPICIOUS:
+            nested_suspicious_count += 1
+            points = 15 if (nested_malicious_count == 0 and nested_suspicious_count <= 2) else 0
+            findings.append(
+                _finding(
+                    "nested.suspicious_forwarded_message",
+                    FindingCategory.CONTENT,
+                    SeverityValue.LOW,
+                    points,
+                    f"Nested message at MIME path '{nested.path}' was evaluated as suspicious.",
+                    "nested_message",
+                    evidence_refs=[nested.path, f"verdict:{nested.verdict.value}"],
+                )
+            )
 
     if len(findings) > MAX_FINDINGS:
         by_rule: dict[str, list[Finding]] = {}

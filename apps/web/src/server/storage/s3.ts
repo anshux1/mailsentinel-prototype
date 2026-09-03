@@ -17,6 +17,7 @@ const safeIdentifier = /^[A-Za-z0-9_-]+$/;
 const evidenceKey =
 	/^organizations\/[A-Za-z0-9_-]+\/cases\/[A-Za-z0-9_-]+\/artifacts\/[A-Za-z0-9_-]+\.eml$/;
 export const MAX_EML_BYTES = env.MAX_EML_BYTES ?? 26_214_400;
+export const MAX_CONTAINER_BYTES = env.MAX_CONTAINER_BYTES ?? 104_857_600;
 
 export const evidenceStorage = new S3Client({
 	endpoint: env.S3_ENDPOINT,

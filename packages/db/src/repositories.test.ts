@@ -1246,17 +1246,17 @@ describe("cursor pagination & stable tie-breaking in repositories (Memory)", () 
 		expect(page1).toHaveLength(1);
 		expect(page1[0]?.id).toBe("case_03");
 
-		const cursor1 = encodeCursor(page1[0]!.createdAt, page1[0]!.id);
+		const cursor1 = encodeCursor(page1[0]?.createdAt ?? new Date(), page1[0]?.id ?? "");
 		const page2 = await caseRepo.listCases({ organizationId: "org_x", limit: 1, cursor: cursor1 });
 		expect(page2).toHaveLength(1);
 		expect(page2[0]?.id).toBe("case_02");
 
-		const cursor2 = encodeCursor(page2[0]!.createdAt, page2[0]!.id);
+		const cursor2 = encodeCursor(page2[0]?.createdAt ?? new Date(), page2[0]?.id ?? "");
 		const page3 = await caseRepo.listCases({ organizationId: "org_x", limit: 1, cursor: cursor2 });
 		expect(page3).toHaveLength(1);
 		expect(page3[0]?.id).toBe("case_01");
 
-		const cursor3 = encodeCursor(page3[0]!.createdAt, page3[0]!.id);
+		const cursor3 = encodeCursor(page3[0]?.createdAt ?? new Date(), page3[0]?.id ?? "");
 		const page4 = await caseRepo.listCases({ organizationId: "org_x", limit: 1, cursor: cursor3 });
 		expect(page4).toHaveLength(0);
 	});
@@ -1301,9 +1301,449 @@ describe("cursor pagination & stable tie-breaking in repositories (Memory)", () 
 		expect(page1).toHaveLength(1);
 		expect(page1[0]?.id).toBe("rep_2");
 
-		const cursor = encodeCursor(page1[0]!.createdAt, page1[0]!.id);
+		const cursor = encodeCursor(page1[0]?.createdAt ?? new Date(), page1[0]?.id ?? "");
 		const page2 = await repos.reports.listReports({ organizationId: "org_x", limit: 1, cursor });
 		expect(page2).toHaveLength(1);
 		expect(page2[0]?.id).toBe("rep_1");
+	});
+});
+
+describe("tenant-scoped ingestion batch repository (Memory)", () => {
+	it("creates batches and prevents cross-tenant or missing case dependency", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_alpha", organizationId: "org_alpha", title: "Alpha Case", createdAt: now, updatedAt: now }],
+		});
+
+		await expect(
+			repos.batches.createBatch({
+				organizationId: "org_beta",
+				caseId: "case_alpha",
+				source: "upload_container",
+			}),
+		).rejects.toThrow(DependencyError);
+
+		const batch = await repos.batches.createBatch({
+			organizationId: "org_alpha",
+			caseId: "case_alpha",
+			source: "upload_container",
+			messageCount: 5,
+		});
+		expect(batch.status).toBe("pending");
+		expect(batch.messageCount).toBe(5);
+
+		// Cross-tenant getBatch returns null
+		const crossRead = await repos.batches.getBatch({
+			organizationId: "org_beta",
+			batchId: batch.id,
+		});
+		expect(crossRead).toBeNull();
+
+		// Same tenant getBatch succeeds
+		const found = await repos.batches.getBatch({
+			organizationId: "org_alpha",
+			batchId: batch.id,
+		});
+		expect(found).not.toBeNull();
+		expect(found?.id).toBe(batch.id);
+	});
+
+	it("transitions batch status and increments counts", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_1", organizationId: "org_1", title: "Case 1", createdAt: now, updatedAt: now }],
+		});
+		const batch = await repos.batches.createBatch({
+			organizationId: "org_1",
+			caseId: "case_1",
+			source: "upload_container",
+			status: "segmenting",
+		});
+
+		const transitioned = await repos.batches.transitionStatus({
+			organizationId: "org_1",
+			batchId: batch.id,
+			status: "ready",
+			metadata: { segmented: true },
+		});
+		expect(transitioned.status).toBe("ready");
+		expect(transitioned.metadata).toEqual({ segmented: true });
+
+		const incremented = await repos.batches.incrementCounts({
+			organizationId: "org_1",
+			batchId: batch.id,
+			readyIncrement: 3,
+			failedIncrement: 1,
+		});
+		expect(incremented.readyCount).toBe(3);
+		expect(incremented.failedCount).toBe(1);
+	});
+
+	it("lists batches by case and respects cursor pagination", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_1", organizationId: "org_1", title: "Case 1", createdAt: now, updatedAt: now }],
+		});
+		const b1 = await repos.batches.createBatch({
+			id: "batch_1",
+			organizationId: "org_1",
+			caseId: "case_1",
+			source: "upload_single",
+		});
+		const b2 = await repos.batches.createBatch({
+			id: "batch_2",
+			organizationId: "org_1",
+			caseId: "case_1",
+			source: "upload_container",
+		});
+		expect(b1.id).toBe("batch_1");
+		expect(b2.id).toBe("batch_2");
+
+		const list = await repos.batches.listBatchesByCase({
+			organizationId: "org_1",
+			caseId: "case_1",
+		});
+		expect(list.length).toBe(2);
+
+		const p1 = await repos.batches.listBatchesByCase({
+			organizationId: "org_1",
+			caseId: "case_1",
+			limit: 1,
+		});
+		expect(p1).toHaveLength(1);
+		const cursor = encodeCursor(p1[0]?.createdAt ?? new Date(), p1[0]?.id ?? "");
+		const p2 = await repos.batches.listBatchesByCase({
+			organizationId: "org_1",
+			caseId: "case_1",
+			limit: 1,
+			cursor,
+		});
+		expect(p2).toHaveLength(1);
+		expect(p2[0]?.id).not.toBe(p1[0]?.id);
+
+		const crossList = await repos.batches.listBatchesByCase({
+			organizationId: "org_2",
+			caseId: "case_1",
+		});
+		expect(crossList.length).toBe(0);
+	});
+});
+
+describe("tenant-scoped mailbox connection repository (Memory)", () => {
+	it("upserts and retrieves mailbox connection with cross-tenant isolation", async () => {
+		const repos = createMemoryRepositories();
+		const conn = await repos.mailbox.upsertConnection({
+			organizationId: "org_sec",
+			provider: "gmail",
+			accountEmail: "soc@example.com",
+			encryptedRefreshToken: "enc_token_abc",
+			tokenNonce: "nonce_123",
+		});
+		expect(conn.status).toBe("connected");
+		expect(conn.accountEmail).toBe("soc@example.com");
+
+		// Cross-tenant get returns null
+		const cross = await repos.mailbox.getConnection({
+			organizationId: "org_other",
+			connectionId: conn.id,
+		});
+		expect(cross).toBeNull();
+
+		// Upsert updates token
+		const updated = await repos.mailbox.upsertConnection({
+			organizationId: "org_sec",
+			provider: "gmail",
+			accountEmail: "soc@example.com",
+			encryptedRefreshToken: "enc_token_new",
+			tokenNonce: "nonce_456",
+		});
+		expect(updated.id).toBe(conn.id);
+		expect(updated.encryptedRefreshToken).toBe("enc_token_new");
+	});
+
+	it("updates cursor and status, lists and deletes connection", async () => {
+		const repos = createMemoryRepositories();
+		const conn = await repos.mailbox.upsertConnection({
+			organizationId: "org_sec",
+			provider: "gmail",
+			accountEmail: "inbox@example.com",
+			encryptedRefreshToken: "enc_token",
+			tokenNonce: "nonce",
+		});
+
+		const updated = await repos.mailbox.updateCursorAndStatus({
+			organizationId: "org_sec",
+			connectionId: conn.id,
+			syncCursor: "hist_12345",
+			status: "syncing",
+		});
+		expect(updated.syncCursor).toBe("hist_12345");
+		expect(updated.status).toBe("syncing");
+
+		const list = await repos.mailbox.listConnections({ organizationId: "org_sec" });
+		expect(list.length).toBe(1);
+
+		const deleted = await repos.mailbox.deleteConnection({
+			organizationId: "org_sec",
+			connectionId: conn.id,
+		});
+		expect(deleted).toBe(true);
+
+		const recheck = await repos.mailbox.getConnection({
+			organizationId: "org_sec",
+			connectionId: conn.id,
+		});
+		expect(recheck).toBeNull();
+	});
+});
+
+describe("batch-aware evidence methods (Memory)", () => {
+	it("createVerified creates evidence with batchId and sequence", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_1", organizationId: "org_1", title: "Case 1", createdAt: now, updatedAt: now }],
+		});
+		const batch = await repos.batches.createBatch({
+			organizationId: "org_1",
+			caseId: "case_1",
+			source: "upload_container",
+		});
+
+		const child1 = await repos.evidence.createVerified({
+			organizationId: "org_1",
+			caseId: "case_1",
+			batchId: batch.id,
+			sequence: 1,
+			sourceMessageId: "<msg1@example.com>",
+			objectKey: "org_1/case_1/artifacts/c1.eml",
+			sha256: "hash1".repeat(12).slice(0, 64),
+			byteSize: 100,
+		});
+		const child2 = await repos.evidence.createVerified({
+			organizationId: "org_1",
+			caseId: "case_1",
+			batchId: batch.id,
+			sequence: 0,
+			sourceMessageId: "<msg0@example.com>",
+			objectKey: "org_1/case_1/artifacts/c0.eml",
+			sha256: "hash0".repeat(12).slice(0, 64),
+			byteSize: 200,
+		});
+
+		expect(child1.status).toBe("verified");
+		expect(child1.batchId).toBe(batch.id);
+		expect(child2.status).toBe("verified");
+		expect(child2.batchId).toBe(batch.id);
+
+		// listEvidenceByBatch returns children sorted by sequence ASC
+		const children = await repos.evidence.listEvidenceByBatch({
+			organizationId: "org_1",
+			batchId: batch.id,
+		});
+		expect(children.length).toBe(2);
+		expect(children[0]?.sequence).toBe(0);
+		expect(children[1]?.sequence).toBe(1);
+
+		// Cross-tenant list returns empty
+		const crossChildren = await repos.evidence.listEvidenceByBatch({
+			organizationId: "org_2",
+			batchId: batch.id,
+		});
+		expect(crossChildren.length).toBe(0);
+	});
+
+	it("enforces cross-tenant batch dependency when creating evidence", async () => {
+		const repos = createMemoryRepositories({
+			cases: [
+				{ id: "case_1", organizationId: "org_1", title: "Case 1", createdAt: now, updatedAt: now },
+				{ id: "case_2", organizationId: "org_2", title: "Case 2", createdAt: now, updatedAt: now },
+			],
+			batches: [
+				{
+					id: "batch_1",
+					organizationId: "org_1",
+					caseId: "case_1",
+					source: "upload_container",
+					status: "ready",
+					containerEvidenceId: null,
+					messageCount: 2,
+					readyCount: 2,
+					failedCount: 0,
+					metadata: {},
+					failureReason: null,
+					createdAt: now,
+					updatedAt: now,
+				},
+			],
+		});
+
+		// Cross-tenant batch reference fails with DependencyError
+		await expect(
+			repos.evidence.createVerified({
+				organizationId: "org_2",
+				caseId: "case_2",
+				batchId: "batch_1",
+				objectKey: "org_2/case_2/c1.eml",
+				sha256: "hash_c1".repeat(8).slice(0, 64),
+				byteSize: 100,
+			}),
+		).rejects.toThrow(DependencyError);
+	});
+
+	it("enforces containerEvidenceId dependency when creating batches", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_1", organizationId: "org_1", title: "Case 1", createdAt: now, updatedAt: now }],
+		});
+
+		// Non-existent container evidence fails with DependencyError
+		await expect(
+			repos.batches.createBatch({
+				organizationId: "org_1",
+				caseId: "case_1",
+				source: "upload_container",
+				containerEvidenceId: "ev_missing",
+			}),
+		).rejects.toThrow(DependencyError);
+	});
+
+	it("repeating a split does not duplicate rows (idempotent child creation)", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_1", organizationId: "org_1", title: "Case 1", createdAt: now, updatedAt: now }],
+		});
+		const batch = await repos.batches.createBatch({
+			organizationId: "org_1",
+			caseId: "case_1",
+			source: "upload_container",
+		});
+
+		const splitSegments = [
+			{ sequence: 0, sha256: "hash0".repeat(12).slice(0, 64), size: 100, key: "c0.eml" },
+			{ sequence: 1, sha256: "hash1".repeat(12).slice(0, 64), size: 200, key: "c1.eml" },
+		];
+
+		// First split run
+		for (const seg of splitSegments) {
+			await repos.evidence.createVerified({
+				organizationId: "org_1",
+				caseId: "case_1",
+				batchId: batch.id,
+				sequence: seg.sequence,
+				objectKey: `org_1/case_1/${seg.key}`,
+				sha256: seg.sha256,
+				byteSize: seg.size,
+			});
+		}
+
+		// Re-split check (idempotent skip existing sequences)
+		const existing = await repos.evidence.listEvidenceByBatch({
+			organizationId: "org_1",
+			batchId: batch.id,
+		});
+		const existingSeqs = new Set(existing.map((c) => c.sequence));
+
+		for (const seg of splitSegments) {
+			if (!existingSeqs.has(seg.sequence)) {
+				await repos.evidence.createVerified({
+					organizationId: "org_1",
+					caseId: "case_1",
+					batchId: batch.id,
+					sequence: seg.sequence,
+					objectKey: `org_1/case_1/${seg.key}`,
+					sha256: seg.sha256,
+					byteSize: seg.size,
+				});
+			}
+		}
+
+		const finalChildren = await repos.evidence.listEvidenceByBatch({
+			organizationId: "org_1",
+			batchId: batch.id,
+		});
+		expect(finalChildren).toHaveLength(2);
+		expect(finalChildren[0]?.sequence).toBe(0);
+		expect(finalChildren[1]?.sequence).toBe(1);
+	});
+
+	it("rolls back batch and child creation on transaction failure in Memory", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_1", organizationId: "org_1", title: "Case 1", createdAt: now, updatedAt: now }],
+		});
+
+		let batchId = "";
+		await expect(
+			repos.transaction(async (txRepos) => {
+				const b = await txRepos.batches.createBatch({
+					organizationId: "org_1",
+					caseId: "case_1",
+					source: "upload_container",
+				});
+				batchId = b.id;
+
+				await txRepos.evidence.createVerified({
+					organizationId: "org_1",
+					caseId: "case_1",
+					batchId: b.id,
+					sequence: 0,
+					objectKey: "tx_c0.eml",
+					sha256: "hash_tx".repeat(8).slice(0, 64),
+					byteSize: 100,
+				});
+
+				throw new Error("Simulated container registration failure");
+			}),
+		).rejects.toThrow("Simulated container registration failure");
+
+		expect(batchId).not.toBe("");
+		const fetchedBatch = await repos.batches.getBatch({ organizationId: "org_1", batchId });
+		expect(fetchedBatch).toBeNull();
+		const children = await repos.evidence.listEvidenceByBatch({ organizationId: "org_1", batchId });
+		expect(children).toHaveLength(0);
+	});
+
+	it("paginates batch evidence with sequence-aware cursors", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_1", organizationId: "org_1", title: "Case 1", createdAt: now, updatedAt: now }],
+		});
+		const batch = await repos.batches.createBatch({
+			organizationId: "org_1",
+			caseId: "case_1",
+			source: "upload_container",
+		});
+
+		for (let i = 0; i < 3; i++) {
+			await repos.evidence.createVerified({
+				organizationId: "org_1",
+				caseId: "case_1",
+				batchId: batch.id,
+				sequence: i,
+				objectKey: `c_${i}.eml`,
+				sha256: `hash_${i}`.repeat(8).slice(0, 64),
+				byteSize: 100,
+			});
+		}
+
+		const p1 = await repos.evidence.listEvidenceByBatch({
+			organizationId: "org_1",
+			batchId: batch.id,
+			limit: 1,
+		});
+		expect(p1).toHaveLength(1);
+		expect(p1[0]?.sequence).toBe(0);
+
+		const cursor1 = encodeCursor(p1[0]?.createdAt ?? new Date(), p1[0]?.id ?? "", p1[0]?.sequence);
+		const p2 = await repos.evidence.listEvidenceByBatch({
+			organizationId: "org_1",
+			batchId: batch.id,
+			limit: 1,
+			cursor: cursor1,
+		});
+		expect(p2).toHaveLength(1);
+		expect(p2[0]?.sequence).toBe(1);
+
+		const cursor2 = encodeCursor(p2[0]?.createdAt ?? new Date(), p2[0]?.id ?? "", p2[0]?.sequence);
+		const p3 = await repos.evidence.listEvidenceByBatch({
+			organizationId: "org_1",
+			batchId: batch.id,
+			limit: 1,
+			cursor: cursor2,
+		});
+		expect(p3).toHaveLength(1);
+		expect(p3[0]?.sequence).toBe(2);
 	});
 });

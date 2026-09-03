@@ -117,6 +117,40 @@ def _bounded_decode(
     return text
 
 
+def check_trailing_message_data(raw: bytes, message: Message) -> bool:
+    """Check if raw message input contains trailing data after the parsed message."""
+    if message.is_multipart():
+        epilogue = getattr(message, "epilogue", None)
+        if epilogue and isinstance(epilogue, str) and epilogue.strip():
+            return True
+        boundary = message.get_param("boundary")
+        if boundary:
+            close_delim = rb"--" + re.escape(str(boundary).encode("ascii", "ignore")) + rb"--"
+            close_matches = list(re.finditer(close_delim, raw))
+            if close_matches:
+                after_close = raw[close_matches[-1].end() :].strip(b"\x00 \t\r\n")
+                if after_close:
+                    return True
+
+    cl_header = message.get("Content-Length")
+    if cl_header:
+        try:
+            cl_val = int(str(cl_header).strip())
+            blank_m = re.search(rb"\r?\n\r?\n", raw)
+            if blank_m and cl_val >= 0:
+                body_start = blank_m.end()
+                body_remaining = raw[body_start + cl_val :].strip(b"\x00 \t\r\n")
+                if body_remaining:
+                    return True
+        except (ValueError, TypeError):
+            pass
+
+    from app.segmentation.segmenter import find_bare_boundaries
+
+    boundaries = find_bare_boundaries(raw, max_messages=2)
+    return len(boundaries) > 1
+
+
 def parse_message(
     raw: bytes,
     *,
@@ -141,6 +175,9 @@ def parse_message(
     result = ParsedMessage()
     for defect in getattr(message, "defects", ()):
         result.warnings.append(f"1:{type(defect).__name__}")
+
+    if check_trailing_message_data(raw, message):
+        result.warnings.append("1:trailing_message_data")
 
     total_header_bytes = 0
     for index, (name, value) in enumerate(message.raw_items(), start=1):

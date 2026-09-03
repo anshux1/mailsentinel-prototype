@@ -3,6 +3,8 @@ import "server-only";
 import type {
 	AnalysisIntakeAccepted,
 	AnalysisIntakeRequest,
+	SegmentationRequest,
+	SegmentationResult,
 } from "@mailsentinel/contracts";
 import { env } from "@/env";
 import { DependencyError } from "@/server/orpc/errors";
@@ -18,8 +20,15 @@ export interface DispatchIntakeResult {
 	status: AnalysisIntakeAccepted["status"];
 }
 
+export interface SegmentEvidenceInput {
+	request: SegmentationRequest;
+	requestId?: string;
+	signal?: AbortSignal;
+}
+
 export interface AnalyzerClient {
 	dispatchIntake(input: DispatchIntakeInput): Promise<DispatchIntakeResult>;
+	segmentEvidence(input: SegmentEvidenceInput): Promise<SegmentationResult>;
 }
 
 export class AnalyzerError extends DependencyError {
@@ -167,6 +176,76 @@ export class HttpAnalyzerClient implements AnalyzerClient {
 			response.status,
 		);
 	}
+
+	async segmentEvidence(
+		input: SegmentEvidenceInput,
+	): Promise<SegmentationResult> {
+		const url = new URL("/v1/evidence/segment", this.baseUrl).toString();
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${this.serviceToken}`,
+		};
+		if (input.requestId) {
+			headers["x-request-id"] = input.requestId;
+		}
+
+		const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+		const combinedSignal = input.signal
+			? AbortSignal.any([input.signal, timeoutSignal])
+			: timeoutSignal;
+
+		let response: Response;
+		try {
+			response = await fetch(url, {
+				method: "POST",
+				headers,
+				body: JSON.stringify(input.request),
+				signal: combinedSignal,
+			});
+		} catch (err: unknown) {
+			if (
+				err instanceof Error &&
+				(err.name === "TimeoutError" || err.name === "AbortError")
+			) {
+				throw new AnalyzerTimeoutError();
+			}
+			throw new AnalyzerUnavailableError();
+		}
+
+		if (response.status === 200) {
+			try {
+				const data = (await response.json()) as SegmentationResult;
+				return data;
+			} catch {
+				throw new AnalyzerValidationError(
+					"Analyzer service returned malformed segmentation response",
+				);
+			}
+		}
+
+		if (response.status === 401) {
+			throw new AnalyzerAuthError();
+		}
+
+		if (response.status === 422) {
+			throw new AnalyzerValidationError(
+				"Analyzer service rejected segmentation payload as invalid",
+			);
+		}
+
+		if (
+			response.status === 502 ||
+			response.status === 503 ||
+			response.status === 504
+		) {
+			throw new AnalyzerUnavailableError();
+		}
+
+		throw new AnalyzerError(
+			`Analyzer returned unexpected status ${response.status}`,
+			response.status,
+		);
+	}
 }
 
 export interface DispatchedIntake {
@@ -184,6 +263,15 @@ export class MemoryAnalyzerClient implements AnalyzerClient {
 	public onBeforeDispatch?: (
 		request: AnalysisIntakeRequest,
 	) => Promise<void> | void;
+
+	public segmentResult: SegmentationResult | null = null;
+	public simulateSegmentStatus:
+		| 200
+		| 401
+		| 422
+		| 503
+		| "timeout"
+		| "unavailable" = 200;
 
 	async dispatchIntake(
 		input: DispatchIntakeInput,
@@ -221,12 +309,55 @@ export class MemoryAnalyzerClient implements AnalyzerClient {
 		};
 	}
 
+	async segmentEvidence(
+		_input: SegmentEvidenceInput,
+	): Promise<SegmentationResult> {
+		if (this.simulateDelayMs > 0) {
+			await new Promise((resolve) => setTimeout(resolve, this.simulateDelayMs));
+		}
+
+		if (this.simulateSegmentStatus === 401) {
+			throw new AnalyzerAuthError();
+		}
+		if (this.simulateSegmentStatus === 422) {
+			throw new AnalyzerValidationError();
+		}
+		if (
+			this.simulateSegmentStatus === 503 ||
+			this.simulateSegmentStatus === "unavailable"
+		) {
+			throw new AnalyzerUnavailableError();
+		}
+		if (this.simulateSegmentStatus === "timeout") {
+			throw new AnalyzerTimeoutError();
+		}
+
+		if (this.segmentResult) {
+			return this.segmentResult;
+		}
+
+		return {
+			containerFormat: "single",
+			messageCount: 1,
+			segments: [
+				{
+					index: 0,
+					byteOffset: 0,
+					byteLength: 0,
+					sha256: "0".repeat(64),
+				},
+			],
+		};
+	}
+
 	clear(): void {
 		this.dispatched = [];
 		this.simulateStatus = 202;
 		this.customAcceptedStatus = "accepted";
 		this.simulateDelayMs = 0;
 		this.onBeforeDispatch = undefined;
+		this.segmentResult = null;
+		this.simulateSegmentStatus = 200;
 	}
 }
 

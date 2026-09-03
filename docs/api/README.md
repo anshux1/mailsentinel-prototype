@@ -34,7 +34,7 @@ Roles are hierarchical: `viewer` < `investigator` < `owner`
 | --- | :-: | :-: | :-: |
 | `cases:read`, `evidence:read`, `analysis:read`, `reports:read` | yes | yes | yes |
 | `cases:create`, `evidence:upload`, `analysis:start`, `reports:generate` | no | yes | yes |
-| `analysis:retry`, `retention:manage`, `admin:manage` | no | no | yes |
+| `analysis:retry`, `retention:manage`, `admin:manage`, `mailbox:manage` | no | no | yes |
 
 ## Procedures
 
@@ -84,6 +84,22 @@ Upload rules:
   Oversized payloads return `PAYLOAD_TOO_LARGE`.
 - Completion is idempotent when digest and byte size match; verified evidence is
   immutable.
+
+### Batches and mailbox
+
+| Procedure | Role | Input | Output |
+| --- | --- | --- | --- |
+| `batch.list` | viewer | `{ caseId, limit?, cursor? }` | `{ items, nextCursor }` |
+| `batch.get` | viewer | `{ batchId, caseId? }` | `Batch | null` |
+| `evidence.listByBatch` | viewer | `{ batchId, caseId?, limit?, cursor? }` | `{ items, nextCursor }` |
+| `mailbox.list`, `mailbox.status` | viewer | tenant-scoped | connection metadata only |
+| `mailbox.startSync` | investigator | `{ connectionId, caseId, maxMessages?, label?, startDate?, endDate? }` | bounded sync result |
+| `mailbox.disconnect` | owner | `{ connectionId }` | `{ success }` |
+
+All batch and mailbox procedures are tenant-scoped. Mailbox procedures and Gmail
+OAuth routes are unavailable unless `MAILBOX_CONNECTORS_ENABLED=true`; refresh
+tokens, nonces, authorization headers, and private object keys never enter
+browser output, logs, or audit metadata.
 
 ### Analysis
 
@@ -163,7 +179,10 @@ Tenant-scoped, append-only records in `audit_records`
 
 `case.create`, `evidence.upload_init`, `evidence.upload_complete`,
 `analysis.start`, `analysis.intake_dispatched`, `analysis.retry`,
-`analysis.failed`, `report.requested`, `report.generate`, `report.download`.
+`analysis.failed`, `batch.created`, `batch.completed`, `batch.failed`,
+`evidence.container_segmented`, `evidence.child_registered`, `mailbox.connected`,
+`mailbox.sync_started`, `mailbox.sync_completed`, `mailbox.disconnected`,
+`report.requested`, `report.generate`, `report.download`.
 
 The analyzer worker appends its own lifecycle records (claimed, completed,
 failed, recovered) to the same table.

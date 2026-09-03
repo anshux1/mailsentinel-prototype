@@ -716,4 +716,268 @@ describe("PostgreSQL repository integration tests", () => {
 			expect(auditRecords[0]?.metadata?.caseId).toBe(caseA);
 		});
 	});
+
+	describe("Phase S10: Ingestion batches, mailbox connections, and batch evidence", () => {
+		it("manages ingestion batches with cross-tenant isolation and atomic count increments", async () => {
+			const batch = await repos.batches.createBatch({
+				organizationId: orgA,
+				caseId: caseA,
+				source: "upload_container",
+				status: "segmenting",
+				messageCount: 10,
+			});
+
+			expect(batch.id).toBeDefined();
+			expect(batch.status).toBe("segmenting");
+			expect(batch.messageCount).toBe(10);
+			expect(batch.readyCount).toBe(0);
+
+			// Cross-tenant get
+			expect(await repos.batches.getBatch({ organizationId: orgB, batchId: batch.id })).toBeNull();
+			// Same tenant get
+			const found = await repos.batches.getBatch({ organizationId: orgA, batchId: batch.id });
+			expect(found?.id).toBe(batch.id);
+
+			// List batches by case
+			const batchesA = await repos.batches.listBatchesByCase({ organizationId: orgA, caseId: caseA });
+			expect(batchesA.some((b) => b.id === batch.id)).toBe(true);
+			const batchesB = await repos.batches.listBatchesByCase({ organizationId: orgB, caseId: caseA });
+			expect(batchesB.length).toBe(0);
+
+			// Transition status
+			const transitioned = await repos.batches.transitionStatus({
+				organizationId: orgA,
+				batchId: batch.id,
+				status: "ready",
+				metadata: { segmented: true },
+			});
+			expect(transitioned.status).toBe("ready");
+			expect(transitioned.metadata).toEqual({ segmented: true });
+
+			// Concurrent count increments stay consistent
+			const increments = Array.from({ length: 5 }, () =>
+				repos.batches.incrementCounts({
+					organizationId: orgA,
+					batchId: batch.id,
+					readyIncrement: 2,
+					failedIncrement: 1,
+				}),
+			);
+			await Promise.all(increments);
+
+			const finalBatch = await repos.batches.getBatch({ organizationId: orgA, batchId: batch.id });
+			expect(finalBatch?.readyCount).toBe(10); // 5 * 2
+			expect(finalBatch?.failedCount).toBe(5); // 5 * 1
+		});
+
+		it("manages mailbox connections with cross-tenant isolation and upsert dedupe", async () => {
+			const email = `agent-${uid}@example.com`;
+			const conn = await repos.mailbox.upsertConnection({
+				organizationId: orgA,
+				provider: "gmail",
+				accountEmail: email,
+				encryptedRefreshToken: "enc_refresh_1",
+				tokenNonce: "nonce_1",
+				scopes: "https://www.googleapis.com/auth/gmail.readonly",
+			});
+
+			expect(conn.id).toBeDefined();
+			expect(conn.accountEmail).toBe(email);
+			expect(conn.status).toBe("connected");
+
+			// Cross-tenant get
+			expect(await repos.mailbox.getConnection({ organizationId: orgB, connectionId: conn.id })).toBeNull();
+			// Same tenant get
+			const found = await repos.mailbox.getConnection({ organizationId: orgA, connectionId: conn.id });
+			expect(found?.id).toBe(conn.id);
+
+			// Re-upsert updates tokens without duplicate row
+			const reUpsert = await repos.mailbox.upsertConnection({
+				organizationId: orgA,
+				provider: "gmail",
+				accountEmail: email,
+				encryptedRefreshToken: "enc_refresh_updated",
+				tokenNonce: "nonce_updated",
+			});
+			expect(reUpsert.id).toBe(conn.id);
+			expect(reUpsert.encryptedRefreshToken).toBe("enc_refresh_updated");
+
+			// Update cursor and status
+			const updated = await repos.mailbox.updateCursorAndStatus({
+				organizationId: orgA,
+				connectionId: conn.id,
+				syncCursor: "history_9999",
+				status: "syncing",
+			});
+			expect(updated.syncCursor).toBe("history_9999");
+			expect(updated.status).toBe("syncing");
+
+			// List connections
+			const listA = await repos.mailbox.listConnections({ organizationId: orgA });
+			expect(listA.some((c) => c.id === conn.id)).toBe(true);
+			const listB = await repos.mailbox.listConnections({ organizationId: orgB });
+			expect(listB.some((c) => c.id === conn.id)).toBe(false);
+
+			// Delete connection
+			const deleted = await repos.mailbox.deleteConnection({ organizationId: orgA, connectionId: conn.id });
+			expect(deleted).toBe(true);
+			expect(await repos.mailbox.getConnection({ organizationId: orgA, connectionId: conn.id })).toBeNull();
+		});
+
+		it("creates verified evidence with batchId and sequence and lists ordered by sequence", async () => {
+			const batch = await repos.batches.createBatch({
+				organizationId: orgA,
+				caseId: caseA,
+				source: "upload_container",
+			});
+
+			const child2 = await repos.evidence.createVerified({
+				organizationId: orgA,
+				caseId: caseA,
+				batchId: batch.id,
+				sequence: 2,
+				sourceMessageId: `<msg2_${uid}@example.com>`,
+				objectKey: `test/${orgA}/batch_ev_2_${uid}.eml`,
+				sha256: "hash_seq_2",
+				byteSize: 200,
+			});
+
+			const child1 = await repos.evidence.createVerified({
+				organizationId: orgA,
+				caseId: caseA,
+				batchId: batch.id,
+				sequence: 1,
+				sourceMessageId: `<msg1_${uid}@example.com>`,
+				objectKey: `test/${orgA}/batch_ev_1_${uid}.eml`,
+				sha256: "hash_seq_1",
+				byteSize: 100,
+			});
+
+			const children = await repos.evidence.listEvidenceByBatch({
+				organizationId: orgA,
+				batchId: batch.id,
+			});
+
+			expect(children.length).toBe(2);
+			expect(children[0]?.id).toBe(child1.id);
+			expect(children[0]?.sequence).toBe(1);
+			expect(children[1]?.id).toBe(child2.id);
+			expect(children[1]?.sequence).toBe(2);
+
+			// Cross-tenant list returns empty
+			const cross = await repos.evidence.listEvidenceByBatch({
+				organizationId: orgB,
+				batchId: batch.id,
+			});
+			expect(cross.length).toBe(0);
+		});
+
+		it("enforces cross-tenant batch foreign key rejection", async () => {
+			const batchB = await repos.batches.createBatch({
+				organizationId: orgB,
+				caseId: caseB,
+				source: "upload_container",
+			});
+
+			await expect(
+				repos.evidence.createVerified({
+					organizationId: orgA,
+					caseId: caseA,
+					batchId: batchB.id,
+					objectKey: `test/${orgA}/cross_batch_${uid}.eml`,
+					sha256: "hash_cross_batch",
+					byteSize: 100,
+				}),
+			).rejects.toThrow(DependencyError);
+		});
+
+		it("enforces idempotent child creation so repeating a split does not duplicate rows", async () => {
+			const batch = await repos.batches.createBatch({
+				organizationId: orgA,
+				caseId: caseA,
+				source: "upload_container",
+			});
+
+			const splitChildren = [
+				{ seq: 0, key: `test/${orgA}/split_0_${uid}.eml`, hash: "hash_s0", size: 100 },
+				{ seq: 1, key: `test/${orgA}/split_1_${uid}.eml`, hash: "hash_s1", size: 200 },
+			];
+
+			// Initial split creation
+			for (const item of splitChildren) {
+				await repos.evidence.createVerified({
+					organizationId: orgA,
+					caseId: caseA,
+					batchId: batch.id,
+					sequence: item.seq,
+					objectKey: item.key,
+					sha256: item.hash,
+					byteSize: item.size,
+				});
+			}
+
+			// Repeating the split: checking existing children by batch to avoid duplicating
+			const existing = await repos.evidence.listEvidenceByBatch({
+				organizationId: orgA,
+				batchId: batch.id,
+			});
+			const existingSeqs = new Set(existing.map((c) => c.sequence));
+
+			for (const item of splitChildren) {
+				if (!existingSeqs.has(item.seq)) {
+					await repos.evidence.createVerified({
+						organizationId: orgA,
+						caseId: caseA,
+						batchId: batch.id,
+						sequence: item.seq,
+						objectKey: item.key,
+						sha256: item.hash,
+						byteSize: item.size,
+					});
+				}
+			}
+
+			const finalChildren = await repos.evidence.listEvidenceByBatch({
+				organizationId: orgA,
+				batchId: batch.id,
+			});
+			expect(finalChildren.length).toBe(2);
+			expect(finalChildren[0]?.sequence).toBe(0);
+			expect(finalChildren[1]?.sequence).toBe(1);
+		});
+
+		it("rolls back batch and child evidence in PostgreSQL transaction when an error occurs", async () => {
+			let batchId = "";
+			const childKey = `test/${orgA}/tx_rollback_child_${uid}.eml`;
+
+			await expect(
+				executeTransaction(db, async (txRepos) => {
+					const batch = await txRepos.batches.createBatch({
+						organizationId: orgA,
+						caseId: caseA,
+						source: "upload_container",
+					});
+					batchId = batch.id;
+
+					await txRepos.evidence.createVerified({
+						organizationId: orgA,
+						caseId: caseA,
+						batchId: batch.id,
+						sequence: 0,
+						objectKey: childKey,
+						sha256: "hash_tx_child",
+						byteSize: 150,
+					});
+
+					throw new Error("Simulated rollback in batch ingestion");
+				}),
+			).rejects.toThrow("Simulated rollback in batch ingestion");
+
+			expect(batchId).not.toBe("");
+			const fetchedBatch = await repos.batches.getBatch({ organizationId: orgA, batchId });
+			expect(fetchedBatch).toBeNull();
+			const fetchedChildren = await repos.evidence.listEvidenceByBatch({ organizationId: orgA, batchId });
+			expect(fetchedChildren.length).toBe(0);
+		});
+	});
 });

@@ -1,18 +1,23 @@
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
+import type { SegmentationResult } from "@mailsentinel/contracts";
 import {
 	type AuditRepository,
 	ConflictError as DbConflictError,
 	DrizzleAuditRepository,
 	DrizzleCaseRepository,
 	DrizzleEvidenceRepository,
+	DrizzleIngestionBatchRepository,
 	decodeCursor,
 	type EvidenceShell,
 	encodeCursor,
+	MemoryEvidenceRepository,
+	MemoryIngestionBatchRepository,
 } from "@mailsentinel/db";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
+import { defaultAnalyzerClient } from "@/server/analyzer-client";
 import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
@@ -30,6 +35,14 @@ import {
 } from "./errors";
 import { investigatorProcedure, viewerProcedure } from "./middleware";
 
+export const evidenceSummarySchema = z.object({
+	from: z.string().nullable().optional(),
+	subject: z.string().nullable().optional(),
+	date: z.union([z.date(), z.string()]).nullable().optional(),
+});
+
+export type EvidenceSummary = z.infer<typeof evidenceSummarySchema>;
+
 export const evidenceOutputSchema = z.object({
 	id: z.string(),
 	organizationId: z.string(),
@@ -38,6 +51,10 @@ export const evidenceOutputSchema = z.object({
 	byteSize: z.number().int(),
 	contentType: z.string(),
 	status: z.enum(["pending", "stored", "verified", "failed"]),
+	batchId: z.string().nullable().optional(),
+	sequence: z.number().int().nullable().optional(),
+	sourceMessageId: z.string().nullable().optional(),
+	summary: evidenceSummarySchema.nullable().optional(),
 	storedAt: z.union([z.date(), z.string()]).nullable().optional(),
 	verifiedAt: z.union([z.date(), z.string()]).nullable().optional(),
 	failedAt: z.union([z.date(), z.string()]).nullable().optional(),
@@ -51,7 +68,15 @@ export type EvidenceOutput = z.infer<typeof evidenceOutputSchema>;
 // Alias for backwards compatibility
 export const evidenceShell = evidenceOutputSchema;
 
-export function toEvidenceOutput(record: EvidenceShell): EvidenceOutput {
+export function toEvidenceOutput(
+	record: EvidenceShell,
+	summary?: EvidenceSummary | null,
+): EvidenceOutput {
+	const explicitSummary =
+		typeof summary === "object" && summary !== null ? summary : null;
+	const recordSummary = (
+		record as unknown as { summary?: EvidenceSummary | null }
+	).summary;
 	return {
 		id: record.id,
 		organizationId: record.organizationId,
@@ -60,6 +85,14 @@ export function toEvidenceOutput(record: EvidenceShell): EvidenceOutput {
 		byteSize: record.byteSize,
 		contentType: record.contentType,
 		status: record.status,
+		batchId: record.batchId ?? null,
+		sequence: record.sequence ?? null,
+		sourceMessageId: record.sourceMessageId ?? null,
+		summary:
+			explicitSummary ??
+			(typeof recordSummary === "object" && recordSummary !== null
+				? recordSummary
+				: null),
 		storedAt: record.storedAt ?? null,
 		verifiedAt: record.verifiedAt ?? null,
 		failedAt: record.failedAt ?? null,
@@ -620,6 +653,301 @@ export const evidenceRouter = {
 				byteSize: buffer.byteLength,
 			});
 
+			const batchRepo =
+				context.repos?.batches ??
+				(context.repos?.evidence instanceof MemoryEvidenceRepository
+					? new MemoryIngestionBatchRepository([])
+					: new DrizzleIngestionBatchRepository(db));
+			const analyzer = context.analyzerClient ?? defaultAnalyzerClient;
+			const storage = context.storage ?? defaultEvidenceStorage;
+
+			// Check if batch already exists for this container
+			const caseBatches = await batchRepo.listBatchesByCase({
+				organizationId: context.organizationId,
+				caseId: input.caseId,
+			});
+			const existingBatch = caseBatches.find(
+				(b) => b.containerEvidenceId === verifiedRecord.id,
+			);
+
+			if (existingBatch && existingBatch.status === "ready") {
+				// Idempotent: re-uploading the same container digest returns existing batch and does not duplicate children
+				return toEvidenceOutput(verifiedRecord);
+			}
+
+			let segmentation: SegmentationResult | null = null;
+			try {
+				segmentation = await analyzer.segmentEvidence({
+					request: {
+						organizationId: context.organizationId,
+						caseId: input.caseId,
+						evidenceId: verifiedRecord.id,
+						objectKey: verifiedRecord.objectKey,
+						sha256: verifiedRecord.sha256,
+						byteSize: verifiedRecord.byteSize,
+					},
+					requestId: context.requestId,
+				});
+			} catch {
+				// Safe degradation: Analyzer unavailable during segmentation degrades safely:
+				// the container is kept as ordinary single evidence with a recorded reason, never lost.
+				logger.warn(
+					"Analyzer segmentation unavailable or failed; proceeding with single evidence",
+					{
+						requestId: context.requestId,
+						organizationId: context.organizationId,
+						caseId: input.caseId,
+						evidenceId: verifiedRecord.id,
+					},
+				);
+			}
+
+			const segments = segmentation?.segments ?? [];
+
+			if (
+				!segmentation ||
+				segmentation.messageCount <= 1 ||
+				segmentation.containerFormat === "single" ||
+				segments.length <= 1
+			) {
+				// Single message path: must not change, plus an upload_single batch record
+				if (!existingBatch) {
+					const singleBatch = await batchRepo.createBatch({
+						organizationId: context.organizationId,
+						caseId: input.caseId,
+						source: "upload_single",
+						status: "ready",
+						containerEvidenceId: verifiedRecord.id,
+						messageCount: 1,
+						readyCount: 1,
+						failedCount: 0,
+						metadata: segmentation
+							? { containerFormat: segmentation.containerFormat }
+							: { degradationReason: "analyzer_segmentation_unavailable" },
+					});
+
+					await recordAuditEvent(auditRepo, {
+						organizationId: context.organizationId,
+						actorUserId: context.userId,
+						action: "batch.created",
+						resourceType: "batch",
+						resourceId: singleBatch.id,
+						requestId: context.requestId,
+						metadata: { caseId: input.caseId, source: "upload_single" },
+					});
+
+					await recordAuditEvent(auditRepo, {
+						organizationId: context.organizationId,
+						actorUserId: context.userId,
+						action: "batch.completed",
+						resourceType: "batch",
+						resourceId: singleBatch.id,
+						requestId: context.requestId,
+						metadata: { caseId: input.caseId, messageCount: 1, readyCount: 1 },
+					});
+				}
+			} else {
+				// Multi-message container ingestion path:
+				const batch =
+					existingBatch ??
+					(await batchRepo.createBatch({
+						organizationId: context.organizationId,
+						caseId: input.caseId,
+						source: "upload_container",
+						status: "segmenting",
+						containerEvidenceId: verifiedRecord.id,
+						messageCount: segments.length,
+						readyCount: 0,
+						failedCount: 0,
+						metadata: {
+							containerFormat: segmentation.containerFormat,
+							segmentCount: segments.length,
+						},
+					}));
+
+				if (!existingBatch) {
+					await recordAuditEvent(auditRepo, {
+						organizationId: context.organizationId,
+						actorUserId: context.userId,
+						action: "batch.created",
+						resourceType: "batch",
+						resourceId: batch.id,
+						requestId: context.requestId,
+						metadata: {
+							caseId: input.caseId,
+							source: "upload_container",
+							messageCount: segments.length,
+						},
+					});
+				}
+
+				const writtenChildKeys: string[] = [];
+				try {
+					const childRecords: {
+						sequence: number;
+						sourceMessageId: string | null;
+						objectKey: string;
+						sha256: string;
+						byteSize: number;
+					}[] = [];
+
+					for (const segment of segments) {
+						const childBuffer = buffer.subarray(
+							segment.byteOffset,
+							segment.byteOffset + segment.byteLength,
+						);
+						const childSha256 = createHash("sha256")
+							.update(childBuffer)
+							.digest("hex")
+							.toLowerCase();
+						const artifactId = `${verifiedRecord.id.replace(/[^A-Za-z0-9_-]/g, "_")}_child_${segment.index}`;
+						const childObjectKey = evidenceObjectKey({
+							organizationId: context.organizationId,
+							caseId: input.caseId,
+							artifactId,
+						});
+
+						await storage.putEvidence({
+							objectKey: childObjectKey,
+							organizationId: context.organizationId,
+							caseId: input.caseId,
+							body: childBuffer,
+							sha256: childSha256,
+						});
+						writtenChildKeys.push(childObjectKey);
+
+						childRecords.push({
+							sequence: segment.index,
+							sourceMessageId: segment.summary?.messageId ?? null,
+							objectKey: childObjectKey,
+							sha256: childSha256,
+							byteSize: childBuffer.byteLength,
+						});
+					}
+
+					// Idempotent child creation: check existing children to avoid duplicates
+					const existingChildren = await evidenceRepo.listEvidenceByBatch({
+						organizationId: context.organizationId,
+						batchId: batch.id,
+					});
+					const existingSeqs = new Set(existingChildren.map((c) => c.sequence));
+
+					for (const child of childRecords) {
+						if (!existingSeqs.has(child.sequence)) {
+							const createdChild = await evidenceRepo.createVerified({
+								organizationId: context.organizationId,
+								caseId: input.caseId,
+								batchId: batch.id,
+								sequence: child.sequence,
+								sourceMessageId: child.sourceMessageId,
+								objectKey: child.objectKey,
+								sha256: child.sha256,
+								byteSize: child.byteSize,
+								contentType: "message/rfc822",
+							});
+
+							await recordAuditEvent(auditRepo, {
+								organizationId: context.organizationId,
+								actorUserId: context.userId,
+								action: "evidence.child_registered",
+								resourceType: "evidence",
+								resourceId: createdChild.id,
+								requestId: context.requestId,
+								metadata: {
+									caseId: input.caseId,
+									batchId: batch.id,
+									sequence: child.sequence,
+									sourceMessageId: child.sourceMessageId,
+								},
+							});
+						}
+					}
+
+					await batchRepo.transitionStatus({
+						organizationId: context.organizationId,
+						batchId: batch.id,
+						status: "ready",
+						metadata: {
+							containerFormat: segmentation.containerFormat,
+							childCount: childRecords.length,
+						},
+					});
+					await batchRepo.incrementCounts({
+						organizationId: context.organizationId,
+						batchId: batch.id,
+						readyIncrement: childRecords.length,
+					});
+
+					await recordAuditEvent(auditRepo, {
+						organizationId: context.organizationId,
+						actorUserId: context.userId,
+						action: "evidence.container_segmented",
+						resourceType: "evidence",
+						resourceId: verifiedRecord.id,
+						requestId: context.requestId,
+						metadata: {
+							caseId: input.caseId,
+							batchId: batch.id,
+							containerFormat: segmentation.containerFormat,
+							childCount: childRecords.length,
+						},
+					});
+
+					await recordAuditEvent(auditRepo, {
+						organizationId: context.organizationId,
+						actorUserId: context.userId,
+						action: "batch.completed",
+						resourceType: "batch",
+						resourceId: batch.id,
+						requestId: context.requestId,
+						metadata: {
+							caseId: input.caseId,
+							messageCount: childRecords.length,
+							readyCount: childRecords.length,
+						},
+					});
+				} catch (childErr) {
+					// Storage or registration failure: cleanup written child objects and mark batch failed
+					for (const key of writtenChildKeys) {
+						await attemptStorageCleanup({
+							storage,
+							objectKey: key,
+							organizationId: context.organizationId,
+							caseId: input.caseId,
+							evidenceId: verifiedRecord.id,
+							requestId: context.requestId,
+							trigger: "put_failure",
+						});
+					}
+
+					try {
+						await batchRepo.transitionStatus({
+							organizationId: context.organizationId,
+							batchId: batch.id,
+							status: "failed",
+							failureReason: "Container segmentation processing failed",
+						});
+					} catch {
+						// Suppress secondary DB error
+					}
+
+					await recordAuditEvent(auditRepo, {
+						organizationId: context.organizationId,
+						actorUserId: context.userId,
+						action: "batch.failed",
+						resourceType: "batch",
+						resourceId: batch.id,
+						requestId: context.requestId,
+						metadata: {
+							caseId: input.caseId,
+							reason: "Container segmentation processing failed",
+						},
+					});
+
+					throw childErr;
+				}
+			}
+
 			return toEvidenceOutput(verifiedRecord);
 		}),
 
@@ -650,7 +978,94 @@ export const evidenceRouter = {
 			const page = hasMore ? records.slice(0, limit) : records;
 			const last = page.at(-1);
 			return {
-				items: page.map(toEvidenceOutput),
+				items: page.map((rec) => toEvidenceOutput(rec)),
+				nextCursor:
+					hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
+			};
+		}),
+
+	listByBatch: viewerProcedure
+		.input(
+			z.object({
+				batchId: z.string().min(1),
+				caseId: z.string().optional(),
+				limit: z.number().int().min(1).max(100).default(50).optional(),
+				cursor: z.string().nullable().optional(),
+			}),
+		)
+		.output(listEvidenceOutputSchema)
+		.handler(async ({ context, input }) => {
+			const evidenceRepo =
+				context.repos?.evidence ?? new DrizzleEvidenceRepository(db);
+			const batchRepo =
+				context.repos?.batches ??
+				(context.repos?.evidence instanceof MemoryEvidenceRepository
+					? new MemoryIngestionBatchRepository([])
+					: new DrizzleIngestionBatchRepository(db));
+
+			const batch = await batchRepo.getBatch({
+				organizationId: context.organizationId,
+				batchId: input.batchId,
+				caseId: input.caseId,
+			});
+			if (!batch) {
+				throw new NotFoundError("Batch not found");
+			}
+
+			const limit = input.limit ?? 50;
+			const records = await evidenceRepo.listEvidenceByBatch({
+				organizationId: context.organizationId,
+				batchId: input.batchId,
+				caseId: input.caseId,
+				limit: limit + 1,
+				cursor: input.cursor ?? null,
+			});
+
+			const hasMore = records.length > limit;
+			const page = hasMore ? records.slice(0, limit) : records;
+			const last = page.at(-1);
+
+			let summaryMap: Map<string, EvidenceSummary> | undefined;
+			if (context.repos?.analysisRuns) {
+				try {
+					const runs = await context.repos.analysisRuns.listAnalysisRuns({
+						organizationId: context.organizationId,
+						caseId: batch.caseId,
+					});
+					summaryMap = new Map();
+					for (const run of runs) {
+						if (run.evidenceId && run.resultSnapshot) {
+							const snap = run.resultSnapshot as Record<string, unknown>;
+							const headers = (snap.headers ?? []) as Array<{
+								name?: string;
+								value?: string;
+							}>;
+							const fromHdr = headers.find(
+								(h) => h.name?.toLowerCase() === "from",
+							)?.value;
+							const subjectHdr = headers.find(
+								(h) => h.name?.toLowerCase() === "subject",
+							)?.value;
+							const dateHdr = headers.find(
+								(h) => h.name?.toLowerCase() === "date",
+							)?.value;
+
+							summaryMap.set(run.evidenceId, {
+								from: fromHdr ?? null,
+								subject: subjectHdr ?? null,
+								date: dateHdr ?? null,
+							});
+						}
+					}
+				} catch {
+					// Fallback to null summaries on error
+				}
+			}
+
+			return {
+				items: page.map((rec) =>
+					toEvidenceOutput(rec, summaryMap?.get(rec.id)),
+				),
 				nextCursor:
 					hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
 			};

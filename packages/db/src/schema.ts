@@ -1,4 +1,5 @@
 import { relations } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
 	boolean,
 	foreignKey,
@@ -31,6 +32,25 @@ export const analysisVerdict = pgEnum("analysis_verdict", ["unknown", "benign", 
 export const evidenceStatus = pgEnum("evidence_status", ["pending", "stored", "verified", "failed"]);
 export const reportStatus = pgEnum("report_status", ["pending", "generating", "completed", "failed"]);
 export const reportFormat = pgEnum("report_format", ["json", "html", "pdf", "markdown", "text"]);
+export const ingestionBatchSource = pgEnum("ingestion_batch_source", [
+	"upload_single",
+	"upload_container",
+	"mailbox_sync",
+]);
+export const ingestionBatchStatus = pgEnum("ingestion_batch_status", [
+	"pending",
+	"segmenting",
+	"ready",
+	"partial",
+	"failed",
+]);
+export const mailboxProvider = pgEnum("mailbox_provider", ["gmail"]);
+export const mailboxConnectionStatus = pgEnum("mailbox_connection_status", [
+	"connected",
+	"syncing",
+	"error",
+	"disconnected",
+]);
 
 // Better Auth tables follow the installed adapter's required field names.
 export const user = pgTable("user", {
@@ -134,6 +154,41 @@ export const cases = pgTable(
 	],
 );
 
+export const ingestionBatches = pgTable(
+	"ingestion_batches",
+	{
+		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		caseId: text("case_id")
+			.notNull()
+			.references(() => cases.id, { onDelete: "cascade" }),
+		source: ingestionBatchSource("source").notNull(),
+		status: ingestionBatchStatus("status").default("pending").notNull(),
+		containerEvidenceId: text("container_evidence_id").references((): AnyPgColumn => evidenceMetadata.id, {
+			onDelete: "set null",
+		}),
+		messageCount: integer("message_count").default(0).notNull(),
+		readyCount: integer("ready_count").default(0).notNull(),
+		failedCount: integer("failed_count").default(0).notNull(),
+		metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}).notNull(),
+		failureReason: text("failure_reason"),
+		...timestamps,
+	},
+	(table) => [
+		foreignKey({
+			columns: [table.organizationId, table.caseId],
+			foreignColumns: [cases.organizationId, cases.id],
+			name: "ingestion_batches_org_case_fk",
+		}),
+		uniqueIndex("ingestion_batches_org_case_id_uidx").on(table.organizationId, table.caseId, table.id),
+		uniqueIndex("ingestion_batches_org_id_uidx").on(table.organizationId, table.id),
+		index("ingestion_batches_org_case_created_idx").on(table.organizationId, table.caseId, table.createdAt),
+		index("ingestion_batches_org_case_idx").on(table.organizationId, table.caseId),
+	],
+);
+
 export const evidenceMetadata = pgTable(
 	"evidence_metadata",
 	{
@@ -144,6 +199,9 @@ export const evidenceMetadata = pgTable(
 		caseId: text("case_id")
 			.notNull()
 			.references(() => cases.id, { onDelete: "cascade" }),
+		batchId: text("batch_id").references((): AnyPgColumn => ingestionBatches.id, { onDelete: "set null" }),
+		sequence: integer("sequence"),
+		sourceMessageId: text("source_message_id"),
 		objectKey: text("object_key").notNull().unique(),
 		sha256: text("sha256").notNull(),
 		byteSize: integer("byte_size").notNull(),
@@ -162,10 +220,16 @@ export const evidenceMetadata = pgTable(
 			foreignColumns: [cases.organizationId, cases.id],
 			name: "evidence_metadata_org_case_fk",
 		}),
+		foreignKey({
+			columns: [table.organizationId, table.caseId, table.batchId],
+			foreignColumns: [ingestionBatches.organizationId, ingestionBatches.caseId, ingestionBatches.id],
+			name: "evidence_metadata_org_case_batch_fk",
+		}),
 		uniqueIndex("evidence_org_case_id_uidx").on(table.organizationId, table.caseId, table.id),
 		uniqueIndex("evidence_org_id_uidx").on(table.organizationId, table.id),
 		uniqueIndex("evidence_org_idempotency_key_uidx").on(table.organizationId, table.idempotencyKey),
 		index("evidence_org_case_idx").on(table.organizationId, table.caseId),
+		index("evidence_org_batch_seq_idx").on(table.organizationId, table.batchId, table.sequence),
 		index("evidence_org_status_idx").on(table.organizationId, table.status),
 		index("evidence_org_created_idx").on(table.organizationId, table.createdAt),
 	],
@@ -295,25 +359,69 @@ export const auditRecords = pgTable(
 	],
 );
 
+export const mailboxConnections = pgTable(
+	"mailbox_connections",
+	{
+		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		provider: mailboxProvider("provider").default("gmail").notNull(),
+		accountEmail: text("account_email").notNull(),
+		encryptedRefreshToken: text("encrypted_refresh_token").notNull(),
+		tokenNonce: text("token_nonce").notNull(),
+		scopes: text("scopes"),
+		syncCursor: text("sync_cursor"),
+		status: mailboxConnectionStatus("status").default("connected").notNull(),
+		lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+		lastFailureReason: text("last_failure_reason"),
+		createdByUserId: text("created_by_user_id").references(() => user.id, { onDelete: "set null" }),
+		...timestamps,
+	},
+	(table) => [
+		uniqueIndex("mailbox_connections_org_provider_email_uidx").on(
+			table.organizationId,
+			table.provider,
+			table.accountEmail,
+		),
+		uniqueIndex("mailbox_connections_org_id_uidx").on(table.organizationId, table.id),
+		index("mailbox_connections_org_idx").on(table.organizationId),
+	],
+);
+
 export const organizationRelations = relations(organizations, ({ many }) => ({
 	memberships: many(memberships),
 	cases: many(cases),
+	ingestionBatches: many(ingestionBatches),
 	evidence: many(evidenceMetadata),
 	analysisRuns: many(analysisRuns),
 	reports: many(reports),
 	auditRecords: many(auditRecords),
+	mailboxConnections: many(mailboxConnections),
 }));
 
 export const caseRelations = relations(cases, ({ one, many }) => ({
 	organization: one(organizations, { fields: [cases.organizationId], references: [organizations.id] }),
+	ingestionBatches: many(ingestionBatches),
 	evidence: many(evidenceMetadata),
 	analysisRuns: many(analysisRuns),
 	reports: many(reports),
+}));
+
+export const ingestionBatchesRelations = relations(ingestionBatches, ({ one, many }) => ({
+	organization: one(organizations, { fields: [ingestionBatches.organizationId], references: [organizations.id] }),
+	case: one(cases, { fields: [ingestionBatches.caseId], references: [cases.id] }),
+	containerEvidence: one(evidenceMetadata, {
+		fields: [ingestionBatches.containerEvidenceId],
+		references: [evidenceMetadata.id],
+	}),
+	evidence: many(evidenceMetadata),
 }));
 
 export const evidenceMetadataRelations = relations(evidenceMetadata, ({ one, many }) => ({
 	organization: one(organizations, { fields: [evidenceMetadata.organizationId], references: [organizations.id] }),
 	case: one(cases, { fields: [evidenceMetadata.caseId], references: [cases.id] }),
+	batch: one(ingestionBatches, { fields: [evidenceMetadata.batchId], references: [ingestionBatches.id] }),
 	analysisRuns: many(analysisRuns),
 }));
 
@@ -333,4 +441,9 @@ export const reportRelations = relations(reports, ({ one }) => ({
 export const auditRecordRelations = relations(auditRecords, ({ one }) => ({
 	organization: one(organizations, { fields: [auditRecords.organizationId], references: [organizations.id] }),
 	actor: one(user, { fields: [auditRecords.actorUserId], references: [user.id] }),
+}));
+
+export const mailboxConnectionsRelations = relations(mailboxConnections, ({ one }) => ({
+	organization: one(organizations, { fields: [mailboxConnections.organizationId], references: [organizations.id] }),
+	createdByUser: one(user, { fields: [mailboxConnections.createdByUserId], references: [user.id] }),
 }));

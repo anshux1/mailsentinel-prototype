@@ -1,8 +1,12 @@
 """Turn parsed hostile message data into bounded, normalized observations."""
 
+import hashlib
 import ipaddress
 import re
 from datetime import UTC, datetime, timedelta
+from email import policy
+from email.message import Message
+from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 from html import unescape
 from html.parser import HTMLParser
@@ -14,6 +18,8 @@ from app.contracts.models import (
     MAX_HEADERS,
     MAX_INDICATORS,
     MAX_MIME_PARTS,
+    MAX_NESTED_MESSAGES,
+    MAX_PARSER_WARNINGS,
     MAX_RECEIVED_HOPS,
     AddressObservation,
     AuthConflictObservation,
@@ -26,6 +32,7 @@ from app.contracts.models import (
     LinkMismatchObservation,
     MessageIdObservation,
     MimePartObservation,
+    NestedMessageObservation,
     ReceivedHop,
     RoutingAnomalyObservation,
 )
@@ -1207,3 +1214,139 @@ extract_authentication_conflicts = extract_auth_conflicts
 extract_routing_observations = extract_routing_anomalies
 extract_content_observations = extract_content_indicators
 extract_html_link_mismatches = extract_link_mismatches
+
+
+def extract_nested_messages(
+    raw: bytes,
+    *,
+    analysis_time: datetime,
+    max_urls: int = 25,
+    max_nested_depth: int = 3,
+    max_nested_messages: int = MAX_NESTED_MESSAGES,
+    max_eml_bytes: int = 26_214_400,
+    max_mime_parts: int = 50,
+    max_mime_depth: int = 10,
+    max_headers: int = 100,
+    max_attachment_bytes: int = 26_214_400,
+) -> list[NestedMessageObservation]:
+    """Recursively extract and evaluate message/rfc822 nested parts up to bounded depth."""
+    from app.parsing.parser import ParseLimitError, parse_message
+    from app.scoring.rules import score_findings, verdict_for
+
+    try:
+        root_message = BytesParser(policy=policy.default).parsebytes(raw)
+    except Exception:
+        return []
+
+    results: list[NestedMessageObservation] = []
+    # Queue items: (path, part_message, depth)
+    queue: list[tuple[str, Message, int]] = [("1", root_message, 0)]
+
+    while queue and len(results) < max_nested_messages:
+        path, current_part, depth = queue.pop(0)
+
+        if current_part.is_multipart():
+            payload = current_part.get_payload()
+            if isinstance(payload, list):
+                for idx, child in enumerate(payload, start=1):
+                    if not isinstance(child, Message):
+                        continue
+                    child_path = f"{path}.{idx}"
+                    child_ct = child.get_content_type().lower()
+                    if child_ct == "message/rfc822":
+                        next_depth = depth + 1
+                        if next_depth <= max_nested_depth and len(results) < max_nested_messages:
+                            inner_payload = child.get_payload()
+                            if isinstance(inner_payload, list) and inner_payload:
+                                inner_msg = inner_payload[0] if isinstance(inner_payload[0], Message) else child
+                            elif isinstance(inner_payload, Message):
+                                inner_msg = inner_payload
+                            else:
+                                inner_msg = child
+
+                            try:
+                                child_bytes = inner_msg.as_bytes()
+                            except Exception:
+                                child_bytes = bytes(inner_msg)
+
+                            child_sha = hashlib.sha256(child_bytes).hexdigest()
+                            child_size = len(child_bytes)
+
+                            try:
+                                child_parsed = parse_message(
+                                    child_bytes,
+                                    max_bytes=max_eml_bytes,
+                                    max_parts=max_mime_parts,
+                                    max_depth=max_mime_depth,
+                                    max_headers=max_headers,
+                                    max_attachment_bytes=max_attachment_bytes,
+                                )
+                            except ParseLimitError as err:
+                                child_parsed = ParsedMessage(warnings=[f"{child_path}:{err.code}"])
+                            except Exception:
+                                child_parsed = ParsedMessage(warnings=[f"{child_path}:parse_error"])
+
+                            n_headers = extract_headers(child_parsed)
+                            n_addresses = extract_addresses(child_parsed)
+                            n_auth = extract_authentication(child_parsed)
+                            n_conflicts = extract_auth_conflicts(n_auth)
+                            n_received = extract_received(child_parsed)
+                            n_routing = extract_routing_anomalies(n_received)
+                            n_mime = extract_mime_parts(child_parsed)
+                            n_indicators = extract_indicators(child_parsed, max_urls)
+                            n_identity = extract_identity(child_parsed, n_addresses)
+                            n_date = extract_date(child_parsed, n_received, analysis_time)
+                            n_msg_id = extract_message_ids(child_parsed, n_addresses)
+                            n_content = extract_content_indicators(child_parsed)
+                            n_links = extract_link_mismatches(child_parsed)
+
+                            n_score = score_findings(
+                                addresses=n_addresses,
+                                authentication=n_auth,
+                                received=n_received,
+                                indicators=n_indicators,
+                                mime_parts=n_mime,
+                                warnings=child_parsed.warnings,
+                                enrichment=[],
+                                identity_observations=n_identity,
+                                date_observations=n_date,
+                                message_id_observations=n_msg_id,
+                                content_indicators=n_content,
+                                link_mismatches=n_links,
+                                routing_anomalies=n_routing,
+                                auth_conflicts=n_conflicts,
+                            )
+                            n_verdict = verdict_for(n_score.final_score)
+
+                            results.append(
+                                NestedMessageObservation(
+                                    path=child_path,
+                                    depth=next_depth,
+                                    sha256=child_sha,
+                                    byte_size=child_size,
+                                    headers=n_headers,
+                                    addresses=n_addresses,
+                                    received_hops=n_received,
+                                    authentication=n_auth,
+                                    mime_parts=n_mime,
+                                    indicators=n_indicators,
+                                    parser_warnings=child_parsed.warnings[:MAX_PARSER_WARNINGS],
+                                    identity_observations=n_identity,
+                                    date_observations=n_date,
+                                    message_id_observations=n_msg_id,
+                                    content_indicators=n_content,
+                                    link_mismatches=n_links,
+                                    routing_anomalies=n_routing,
+                                    auth_conflicts=n_conflicts,
+                                    findings=n_score.contributions,
+                                    score=n_score,
+                                    verdict=n_verdict,
+                                )
+                            )
+
+                            if next_depth < max_nested_depth:
+                                queue.append((child_path, inner_msg, next_depth))
+                    else:
+                        queue.append((child_path, child, depth))
+
+    return results

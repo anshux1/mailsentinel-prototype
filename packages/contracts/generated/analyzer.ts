@@ -89,6 +89,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/evidence/segment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Segment Evidence */
+        post: operations["segment_evidence_v1_evidence_segment_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -204,6 +221,11 @@ export interface components {
             caseId: string;
             /** Confidence */
             confidence: number;
+            /**
+             * Containersuspected
+             * @default false
+             */
+            containerSuspected: boolean;
             /** Contentindicators */
             contentIndicators?: components["schemas"]["ContentIndicatorObservation"][];
             /** Dateobservations */
@@ -224,6 +246,8 @@ export interface components {
             messageIdObservations?: components["schemas"]["MessageIdObservation"][];
             /** Mimeparts */
             mimeParts?: components["schemas"]["MimePartObservation"][];
+            /** Nestedmessages */
+            nestedMessages?: components["schemas"]["NestedMessageObservation"][];
             /** Organizationid */
             organizationId: string;
             /** Parserwarnings */
@@ -234,12 +258,12 @@ export interface components {
             routingAnomalies?: components["schemas"]["RoutingAnomalyObservation"][];
             /**
              * Rulesetversion
-             * @default 1.0.0
+             * @default v1.2.0
              */
             rulesetVersion: string;
             /**
              * Schemaversion
-             * @default 1.0.0
+             * @default 1.2.0
              */
             schemaVersion: string;
             score: components["schemas"]["ScoreBreakdown"];
@@ -340,6 +364,51 @@ export interface components {
              * @default authentication-results
              */
             source: string;
+        };
+        /**
+         * ContainerFormat
+         * @enum {string}
+         */
+        ContainerFormat: "mbox" | "bare_concatenation" | "multipart/digest" | "single";
+        /** ContainerMessageSummary */
+        ContainerMessageSummary: {
+            /**
+             * Date
+             * @default null
+             */
+            date: string | null;
+            /**
+             * Fromaddress
+             * @default null
+             */
+            fromAddress: string | null;
+            /**
+             * Fromdisplayname
+             * @default null
+             */
+            fromDisplayName: string | null;
+            /**
+             * Messageid
+             * @default null
+             */
+            messageId: string | null;
+            /**
+             * Subject
+             * @default null
+             */
+            subject: string | null;
+        };
+        /** ContainerSegment */
+        ContainerSegment: {
+            /** Bytelength */
+            byteLength: number;
+            /** Byteoffset */
+            byteOffset: number;
+            /** Index */
+            index: number;
+            /** Sha256 */
+            sha256: string;
+            summary?: components["schemas"]["ContainerMessageSummary"];
         };
         /** ContentIndicatorObservation */
         ContentIndicatorObservation: {
@@ -598,6 +667,55 @@ export interface components {
              */
             typeExtensionMismatch: boolean;
         };
+        /** NestedMessageObservation */
+        NestedMessageObservation: {
+            /** Addresses */
+            addresses?: components["schemas"]["AddressObservation"][];
+            /** Authconflicts */
+            authConflicts?: components["schemas"]["AuthConflictObservation"][];
+            /** Authentication */
+            authentication?: components["schemas"]["AuthenticationObservation"][];
+            /**
+             * Bytesize
+             * @default null
+             */
+            byteSize: number | null;
+            /** Contentindicators */
+            contentIndicators?: components["schemas"]["ContentIndicatorObservation"][];
+            /** Dateobservations */
+            dateObservations?: components["schemas"]["DateObservation"][];
+            /** Depth */
+            depth: number;
+            /** Findings */
+            findings?: components["schemas"]["Finding"][];
+            /** Headers */
+            headers?: components["schemas"]["HeaderObservation"][];
+            /** Identityobservations */
+            identityObservations?: components["schemas"]["IdentityObservation"][];
+            /** Indicators */
+            indicators?: components["schemas"]["IndicatorObservation"][];
+            /** Linkmismatches */
+            linkMismatches?: components["schemas"]["LinkMismatchObservation"][];
+            /** Messageidobservations */
+            messageIdObservations?: components["schemas"]["MessageIdObservation"][];
+            /** Mimeparts */
+            mimeParts?: components["schemas"]["MimePartObservation"][];
+            /** Parserwarnings */
+            parserWarnings?: string[];
+            /** Path */
+            path: string;
+            /** Receivedhops */
+            receivedHops?: components["schemas"]["ReceivedHop"][];
+            /** Routinganomalies */
+            routingAnomalies?: components["schemas"]["RoutingAnomalyObservation"][];
+            score: components["schemas"]["ScoreBreakdown"];
+            /**
+             * Sha256
+             * @default null
+             */
+            sha256: string | null;
+            verdict: components["schemas"]["VerdictValue"];
+        };
         /** ReceivedHop */
         ReceivedHop: {
             /**
@@ -665,6 +783,29 @@ export interface components {
             contributions?: components["schemas"]["Finding"][];
             /** Finalscore */
             finalScore: number;
+        };
+        /** SegmentationRequest */
+        SegmentationRequest: {
+            /** Bytesize */
+            byteSize: number;
+            /** Caseid */
+            caseId: string;
+            /** Evidenceid */
+            evidenceId: string;
+            /** Objectkey */
+            objectKey: string;
+            /** Organizationid */
+            organizationId: string;
+            /** Sha256 */
+            sha256: string;
+        };
+        /** SegmentationResult */
+        SegmentationResult: {
+            containerFormat: components["schemas"]["ContainerFormat"];
+            /** Messagecount */
+            messageCount: number;
+            /** Segments */
+            segments?: components["schemas"]["ContainerSegment"][];
         };
         /**
          * SeverityValue
@@ -824,6 +965,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalysisResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    segment_evidence_v1_evidence_segment_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SegmentationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SegmentationResult"];
                 };
             };
             /** @description Validation Error */
