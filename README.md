@@ -15,6 +15,7 @@ This README explains the architecture, local setup, deployment options, every en
 - [Free and low-cost hosting options](#free-and-low-cost-hosting-options)
 - [Prerequisites](#prerequisites)
 - [Local development](#local-development)
+- [Docker Compose explained](#docker-compose-explained)
 - [Environment variables](#environment-variables)
 - [Production deployment](#production-deployment)
 - [Google/Gmail setup](#googlegmail-setup)
@@ -259,6 +260,30 @@ pnpm db:migrate
 pnpm db:seed
 ```
 
+The checked-in Compose file keeps the analyzer Docker-network-only. Before starting a web process on the host, create a temporary local override to publish the analyzer only on loopback:
+
+```bash
+cat >/tmp/mailsentinel-web-compose.yaml <<'EOF'
+services:
+  analyzer:
+    ports:
+      - "127.0.0.1:8000:8000"
+EOF
+
+docker compose \\
+  -f infra/compose.yaml \\
+  -f /tmp/mailsentinel-web-compose.yaml \\
+  up -d --build --wait postgres redis minio analyzer worker
+```
+
+In `apps/web/.env`, use `localhost` for host-published services:
+
+```dotenv
+DATABASE_URL=postgresql://mailsentinel:mailsentinel@localhost:5432/mailsentinel
+ANALYZER_INTERNAL_URL=http://localhost:8000
+S3_ENDPOINT=http://localhost:9000
+```
+
 Start the web application:
 
 ```bash
@@ -301,6 +326,167 @@ pnpm infra:reset   # destructive: removes local database/object-storage volumes
 
 ---
 
+## Docker Compose explained
+
+The Compose file is [`infra/compose.yaml`](infra/compose.yaml). It starts the private backend dependencies and Python analysis processes, but it does **not** start the Next.js `web` process. The web process normally runs on the host with `pnpm --filter @mailsentinel/web dev`.
+
+### What `pnpm infra:start` actually does
+
+The command is a wrapper around Docker Compose:
+
+```text
+infra/scripts/start.sh
+  -> docker compose -f infra/compose.yaml up -d --build --wait postgres redis minio analyzer worker
+  -> pnpm db:migrate
+  -> pnpm db:seed
+```
+
+In order:
+
+1. Docker creates the `mailsentinel` Compose network and the named volumes if they do not exist.
+2. Docker pulls `postgres:17-alpine`, `redis:7-alpine`, and the pinned MinIO images.
+3. PostgreSQL, Redis, and MinIO start in the background.
+4. Docker waits for their health checks to pass.
+5. `minio-init` creates the `mailsentinel-evidence` bucket and sets it to private. It is a one-shot initialization container, not a long-running service.
+6. Docker builds the analyzer image from `apps/analyzer/Dockerfile` and starts the analyzer after PostgreSQL, Redis, MinIO, and `minio-init` are ready.
+7. Docker builds a second container from the same analyzer image and starts the Dramatiq worker.
+8. The script runs PostgreSQL migrations from the host.
+9. The script seeds the demo user and `org_demo` organization.
+
+`--wait` only waits for services that have health checks. The worker has no HTTP health endpoint, so verify it with `docker compose ... ps` and its logs.
+
+### Compose service-by-service
+
+| Service | Image/build | Internal address | Host port | Role |
+|---|---|---|---:|---|
+| `postgres` | `postgres:17-alpine` | `postgres:5432` | `127.0.0.1:5432` | Relational application database. |
+| `redis` | `redis:7-alpine` | `redis:6379` | `127.0.0.1:6379` | Dramatiq queue and analyzer cache. |
+| `minio` | Pinned `minio/minio` image | `minio:9000` | `127.0.0.1:9000` | S3-compatible evidence storage. Console is on `127.0.0.1:9001`. |
+| `minio-init` | Pinned `minio/mc` image | connects to `minio:9000` | none | Creates and privatizes the bucket, then exits successfully. |
+| `analyzer` | Built from `apps/analyzer` | `analyzer:8000` | none | Private FastAPI analysis/segmentation API. `expose` is Docker-network-only. |
+| `worker` | Same analyzer image | no listener | none | Runs `uv run dramatiq app.tasks.broker` and consumes Redis jobs. |
+| `web` | **Not defined here** | host process | `localhost:3000` | Start separately with Next.js. |
+
+### Why service names are different from `localhost`
+
+Containers on the Compose network resolve each other by service name. Therefore the analyzer container uses:
+
+```dotenv
+DATABASE_URL=postgresql://mailsentinel:mailsentinel@postgres:5432/mailsentinel
+REDIS_URL=redis://redis:6379/0
+S3_ENDPOINT=http://minio:9000
+```
+
+The web process running directly on your laptop is outside that Docker network. It must use the host-published ports instead:
+
+```dotenv
+DATABASE_URL=postgresql://mailsentinel:mailsentinel@localhost:5432/mailsentinel
+ANALYZER_INTERNAL_URL=http://localhost:8000
+S3_ENDPOINT=http://localhost:9000
+```
+
+The development Compose file does not publish the analyzer port; `pnpm infra:start` is intended to run the web in a Docker-aware setup where the analyzer is reachable by network, or you can temporarily publish it for host-run web development:
+
+```bash
+docker compose -f infra/compose.yaml up -d --build --wait analyzer
+# For host access, use a development-only override or run the analyzer separately:
+docker run --rm --name mailsentinel-analyzer-host \\
+  --env-file apps/analyzer/.env \\
+  -p 127.0.0.1:8000:8000 \\
+  mailsentinel-analyzer
+```
+
+Do not expose port 8000 publicly. For a clean local setup, either run the web inside the same Docker network using a local override, or add a temporary `ports: ["127.0.0.1:8000:8000"]` override for the analyzer only. The checked-in Compose file deliberately uses `expose` instead of a host port to keep the analyzer private.
+
+### Volumes and data persistence
+
+Compose declares two named volumes:
+
+```text
+mailsentinel_postgres-data  -> PostgreSQL data directory
+mailsentinel_minio-data     -> MinIO object data
+```
+
+`docker compose down` stops/removes containers but keeps these volumes. Your local database and evidence remain. `docker compose down --volumes`, which is used by `pnpm infra:reset`, deletes both volumes and permanently destroys local data.
+
+List volumes and containers:
+
+```bash
+docker volume ls | grep mailsentinel
+docker compose -f infra/compose.yaml ps
+```
+
+### Useful Compose commands
+
+Run these from the repository root:
+
+```bash
+# Show the fully resolved Compose configuration
+docker compose -f infra/compose.yaml config
+
+# Start only backing services
+docker compose -f infra/compose.yaml up -d --wait postgres redis minio
+
+# Create/recreate the private bucket
+docker compose -f infra/compose.yaml run --rm minio-init
+
+# Rebuild and restart analyzer/worker after Python code changes
+docker compose -f infra/compose.yaml up -d --build analyzer worker
+
+# Follow one service's logs
+docker compose -f infra/compose.yaml logs -f analyzer
+docker compose -f infra/compose.yaml logs -f worker
+docker compose -f infra/compose.yaml logs -f postgres
+
+# Open a shell/command in a running container
+docker compose -f infra/compose.yaml exec postgres \\
+  psql -U mailsentinel -d mailsentinel
+docker compose -f infra/compose.yaml exec analyzer \\
+  python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/health/ready').read().decode())"
+
+# Stop containers but preserve named volumes
+docker compose -f infra/compose.yaml down
+
+# Stop containers and delete volumes — destructive
+docker compose -f infra/compose.yaml down --volumes --remove-orphans
+```
+
+### Health-check behavior
+
+- PostgreSQL is healthy when `pg_isready` accepts connections.
+- Redis is healthy when `redis-cli ping` returns successfully.
+- MinIO is healthy when `mc ready local` succeeds.
+- `minio-init` must exit with code 0 before the analyzer starts.
+- The analyzer is healthy when `GET /health/live` succeeds inside its container.
+- The worker has no health check; a running container is not proof that it can process jobs. Inspect worker logs and confirm analysis runs leave `queued`.
+
+### Compose environment warning
+
+The current `infra/compose.yaml` has inline development values:
+
+```text
+mailsentinel / mailsentinel
+mailsentinel-local-secret
+local-development-token-change-me
+APP_ENV=development
+ENRICHMENT_MODE=fixture
+```
+
+These values are intentionally convenient for local development. `apps/web/.env` and `apps/analyzer/.env` do not override the explicit `environment:` values already written in the Compose file. For production, create a separate Compose override or deployment configuration that:
+
+- injects secrets from the hosting platform;
+- uses `APP_ENV=production`;
+- uses managed or encrypted persistent storage;
+- removes public bindings for PostgreSQL, Redis, and MinIO;
+- keeps analyzer traffic on a private network;
+- adds restart policies, resource limits, backup jobs, and monitoring;
+- runs migrations as a reviewed one-shot release job;
+- adds the web service or runs it under a process manager.
+
+Do not edit the development file in place and assume it is production-ready.
+
+---
+
 ## Environment variables
 
 There are separate environment sets for `web`, `analyzer/worker`, backing services, and the seed command. Do not put all secrets in the browser or in a `NEXT_PUBLIC_*` variable.
@@ -308,9 +494,11 @@ There are separate environment sets for `web`, `analyzer/worker`, backing servic
 Create these files in a deployment:
 
 ```text
-apps/web/.env          # read by the Next.js web process and migration/seed commands when run there
-apps/analyzer/.env     # read by the analyzer and worker
+apps/web/.env          # read by the Next.js web process
+apps/analyzer/.env     # read by a manually run analyzer/worker
 ```
+
+For migration and seed commands, make sure `DATABASE_URL`, `BETTER_AUTH_SECRET`, and `BETTER_AUTH_URL` are exported in the shell or configured in the command runner. Do not assume that an app `.env` file is automatically loaded by every workspace CLI.
 
 The Compose development file has inline values and does not automatically replace them with every value in the `.env` files. For production, use your platform's secret manager or a production Compose/VM configuration rather than relying on the development file.
 
