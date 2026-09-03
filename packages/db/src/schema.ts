@@ -28,6 +28,9 @@ export const analysisRunStatus = pgEnum("analysis_run_status", [
 	"failed",
 ]);
 export const analysisVerdict = pgEnum("analysis_verdict", ["unknown", "benign", "suspicious", "malicious"]);
+export const evidenceStatus = pgEnum("evidence_status", ["pending", "stored", "verified", "failed"]);
+export const reportStatus = pgEnum("report_status", ["pending", "generating", "completed", "failed"]);
+export const reportFormat = pgEnum("report_format", ["json", "html", "pdf", "markdown", "text"]);
 
 // Better Auth tables follow the installed adapter's required field names.
 export const user = pgTable("user", {
@@ -127,6 +130,7 @@ export const cases = pgTable(
 	(table) => [
 		uniqueIndex("cases_organization_id_uidx").on(table.organizationId, table.id),
 		index("cases_organization_idx").on(table.organizationId),
+		index("cases_org_created_idx").on(table.organizationId, table.createdAt),
 	],
 );
 
@@ -144,6 +148,12 @@ export const evidenceMetadata = pgTable(
 		sha256: text("sha256").notNull(),
 		byteSize: integer("byte_size").notNull(),
 		contentType: text("content_type").default("message/rfc822").notNull(),
+		status: evidenceStatus("status").default("verified").notNull(),
+		idempotencyKey: text("idempotency_key"),
+		storedAt: timestamp("stored_at", { withTimezone: true }),
+		verifiedAt: timestamp("verified_at", { withTimezone: true }),
+		failedAt: timestamp("failed_at", { withTimezone: true }),
+		failureReason: text("failure_reason"),
 		...timestamps,
 	},
 	(table) => [
@@ -153,7 +163,11 @@ export const evidenceMetadata = pgTable(
 			name: "evidence_metadata_org_case_fk",
 		}),
 		uniqueIndex("evidence_org_case_id_uidx").on(table.organizationId, table.caseId, table.id),
+		uniqueIndex("evidence_org_id_uidx").on(table.organizationId, table.id),
+		uniqueIndex("evidence_org_idempotency_key_uidx").on(table.organizationId, table.idempotencyKey),
 		index("evidence_org_case_idx").on(table.organizationId, table.caseId),
+		index("evidence_org_status_idx").on(table.organizationId, table.status),
+		index("evidence_org_created_idx").on(table.organizationId, table.createdAt),
 	],
 );
 
@@ -200,9 +214,63 @@ export const analysisRuns = pgTable(
 			foreignColumns: [evidenceMetadata.organizationId, evidenceMetadata.caseId, evidenceMetadata.id],
 			name: "analysis_runs_org_case_evidence_fk",
 		}),
+		uniqueIndex("analysis_runs_org_case_id_uidx").on(table.organizationId, table.caseId, table.id),
+		uniqueIndex("analysis_runs_org_id_uidx").on(table.organizationId, table.id),
+		uniqueIndex("analysis_runs_idempotency_key_uidx").on(table.organizationId, table.idempotencyKey),
 		index("analysis_runs_org_case_idx").on(table.organizationId, table.caseId),
 		index("analysis_runs_status_idx").on(table.organizationId, table.status),
-		uniqueIndex("analysis_runs_idempotency_key_uidx").on(table.organizationId, table.idempotencyKey),
+		index("analysis_runs_verdict_idx").on(table.organizationId, table.verdict),
+		index("analysis_runs_evidence_idx").on(table.organizationId, table.evidenceId),
+		index("analysis_runs_org_created_idx").on(table.organizationId, table.createdAt),
+	],
+);
+
+export const reports = pgTable(
+	"reports",
+	{
+		id: text("id").primaryKey(),
+		organizationId: text("organization_id")
+			.notNull()
+			.references(() => organizations.id, { onDelete: "cascade" }),
+		caseId: text("case_id")
+			.notNull()
+			.references(() => cases.id, { onDelete: "cascade" }),
+		analysisRunId: text("analysis_run_id")
+			.notNull()
+			.references(() => analysisRuns.id, { onDelete: "cascade" }),
+		version: integer("version").default(1).notNull(),
+		status: reportStatus("status").default("pending").notNull(),
+		format: reportFormat("format").default("html").notNull(),
+		objectKey: text("object_key"),
+		metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}).notNull(),
+		failureReason: text("failure_reason"),
+		generatedAt: timestamp("generated_at", { withTimezone: true }),
+		...timestamps,
+	},
+	(table) => [
+		foreignKey({
+			columns: [table.organizationId, table.caseId],
+			foreignColumns: [cases.organizationId, cases.id],
+			name: "reports_org_case_fk",
+		}),
+		foreignKey({
+			columns: [table.organizationId, table.caseId, table.analysisRunId],
+			foreignColumns: [analysisRuns.organizationId, analysisRuns.caseId, analysisRuns.id],
+			name: "reports_org_case_run_fk",
+		}),
+		uniqueIndex("reports_org_case_id_uidx").on(table.organizationId, table.caseId, table.id),
+		uniqueIndex("reports_org_id_uidx").on(table.organizationId, table.id),
+		uniqueIndex("reports_org_run_version_format_uidx").on(
+			table.organizationId,
+			table.analysisRunId,
+			table.version,
+			table.format,
+		),
+		uniqueIndex("reports_object_key_uidx").on(table.objectKey),
+		index("reports_org_case_idx").on(table.organizationId, table.caseId),
+		index("reports_org_run_idx").on(table.organizationId, table.analysisRunId),
+		index("reports_org_status_idx").on(table.organizationId, table.status),
+		index("reports_org_created_idx").on(table.organizationId, table.createdAt),
 	],
 );
 
@@ -220,15 +288,49 @@ export const auditRecords = pgTable(
 		metadata: jsonb("metadata").$type<Record<string, string>>().default({}).notNull(),
 		createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 	},
-	(table) => [index("audit_records_organization_idx").on(table.organizationId)],
+	(table) => [
+		index("audit_records_organization_idx").on(table.organizationId),
+		index("audit_records_resource_idx").on(table.organizationId, table.resourceType, table.resourceId),
+		index("audit_records_created_idx").on(table.organizationId, table.createdAt),
+	],
 );
 
 export const organizationRelations = relations(organizations, ({ many }) => ({
 	memberships: many(memberships),
 	cases: many(cases),
+	evidence: many(evidenceMetadata),
+	analysisRuns: many(analysisRuns),
+	reports: many(reports),
+	auditRecords: many(auditRecords),
 }));
+
 export const caseRelations = relations(cases, ({ one, many }) => ({
 	organization: one(organizations, { fields: [cases.organizationId], references: [organizations.id] }),
 	evidence: many(evidenceMetadata),
 	analysisRuns: many(analysisRuns),
+	reports: many(reports),
+}));
+
+export const evidenceMetadataRelations = relations(evidenceMetadata, ({ one, many }) => ({
+	organization: one(organizations, { fields: [evidenceMetadata.organizationId], references: [organizations.id] }),
+	case: one(cases, { fields: [evidenceMetadata.caseId], references: [cases.id] }),
+	analysisRuns: many(analysisRuns),
+}));
+
+export const analysisRunRelations = relations(analysisRuns, ({ one, many }) => ({
+	organization: one(organizations, { fields: [analysisRuns.organizationId], references: [organizations.id] }),
+	case: one(cases, { fields: [analysisRuns.caseId], references: [cases.id] }),
+	evidence: one(evidenceMetadata, { fields: [analysisRuns.evidenceId], references: [evidenceMetadata.id] }),
+	reports: many(reports),
+}));
+
+export const reportRelations = relations(reports, ({ one }) => ({
+	organization: one(organizations, { fields: [reports.organizationId], references: [organizations.id] }),
+	case: one(cases, { fields: [reports.caseId], references: [cases.id] }),
+	analysisRun: one(analysisRuns, { fields: [reports.analysisRunId], references: [analysisRuns.id] }),
+}));
+
+export const auditRecordRelations = relations(auditRecords, ({ one }) => ({
+	organization: one(organizations, { fields: [auditRecords.organizationId], references: [organizations.id] }),
+	actor: one(user, { fields: [auditRecords.actorUserId], references: [user.id] }),
 }));
