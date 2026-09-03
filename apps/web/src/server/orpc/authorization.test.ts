@@ -2,6 +2,7 @@ import {
 	type CaseShell,
 	RepositoryError as DbRepositoryError,
 	type MembershipShell,
+	MemoryAnalysisRunRepository,
 	MemoryAuditRepository,
 	MemoryCaseRepository,
 	MemoryMembershipRepository,
@@ -101,6 +102,7 @@ describe("Phase S3: Authorization Model & Infrastructure", () => {
 		const membershipRepo = new MemoryMembershipRepository([
 			...initialMemberships,
 		]);
+		const analysisRepo = new MemoryAnalysisRunRepository([], cases, []);
 
 		const context: RpcContext = {
 			requestId: "req_test_123",
@@ -111,6 +113,7 @@ describe("Phase S3: Authorization Model & Infrastructure", () => {
 				cases: caseRepo,
 				audit: auditRepo,
 				memberships: membershipRepo,
+				analysisRuns: analysisRepo,
 			},
 			...overrides,
 		};
@@ -169,7 +172,7 @@ describe("Phase S3: Authorization Model & Infrastructure", () => {
 		it("rejects report.generate anonymously with UNAUTHORIZED (401)", async () => {
 			const client = createRouterClient(router, { context: anonymousContext });
 			await expect(
-				client.report.generate({ caseId: "case_1" }),
+				client.report.generate({ analysisRunId: "run_1" }),
 			).rejects.toMatchObject({
 				code: "UNAUTHORIZED",
 				status: 401,
@@ -442,7 +445,7 @@ describe("Phase S3: Authorization Model & Infrastructure", () => {
 			const client = createRouterClient(router, { context });
 
 			await expect(
-				client.report.generate({ caseId: "case_tenant_1" }),
+				client.report.generate({ analysisRunId: "missing_run" }),
 			).rejects.toMatchObject({
 				code: "FORBIDDEN",
 				status: 403,
@@ -508,10 +511,9 @@ describe("Phase S3: Authorization Model & Infrastructure", () => {
 			});
 			const client = createRouterClient(router, { context });
 
-			const result = await client.report.generate({ caseId: "case_tenant_1" });
-			expect(result).toMatchObject({
-				status: "deferred",
-			});
+			await expect(
+				client.report.generate({ analysisRunId: "missing_run" }),
+			).rejects.toMatchObject({ code: "NOT_FOUND" });
 		});
 
 		it("allows investigator to execute report.generate per role permissions", async () => {
@@ -522,10 +524,9 @@ describe("Phase S3: Authorization Model & Infrastructure", () => {
 			});
 			const client = createRouterClient(router, { context });
 
-			const result = await client.report.generate({ caseId: "case_tenant_1" });
-			expect(result).toMatchObject({
-				status: "deferred",
-			});
+			await expect(
+				client.report.generate({ analysisRunId: "missing_run" }),
+			).rejects.toMatchObject({ code: "NOT_FOUND" });
 		});
 	});
 

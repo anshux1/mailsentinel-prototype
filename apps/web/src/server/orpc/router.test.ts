@@ -1,6 +1,7 @@
 import {
 	type CaseShell,
 	type EvidenceShell,
+	MemoryAnalysisRunRepository,
 	MemoryAuditRepository,
 	MemoryCaseRepository,
 	MemoryRepositories,
@@ -121,32 +122,41 @@ describe("application router", () => {
 			context: viewerContext,
 		});
 		await expect(
-			viewerClient.report.generate({ caseId: "case_01" }),
+			viewerClient.report.generate({ analysisRunId: "missing_run" }),
 		).rejects.toMatchObject({
 			code: "FORBIDDEN",
 		});
 
+		const emptyAnalysisRepo = new MemoryAnalysisRunRepository(
+			[],
+			[testCase],
+			[],
+		);
 		const investigatorContext: RpcContext = {
 			requestId: "req_inv_report",
 			userId: "user_investigator",
 			organizationId: "org_01",
 			role: "investigator",
+			repos: { analysisRuns: emptyAnalysisRepo },
 		};
 		const invClient = createRouterClient(router, {
 			context: investigatorContext,
 		});
-		const invResult = await invClient.report.generate({ caseId: "case_01" });
-		expect(invResult.status).toBe("deferred");
+		await expect(
+			invClient.report.generate({ analysisRunId: "missing_run" }),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
 
 		const ownerContext: RpcContext = {
 			requestId: "req_owner_report",
 			userId: "user_owner",
 			organizationId: "org_01",
 			role: "owner",
+			repos: { analysisRuns: emptyAnalysisRepo },
 		};
 		const ownerClient = createRouterClient(router, { context: ownerContext });
-		const result = await ownerClient.report.generate({ caseId: "case_01" });
-		expect(result.status).toBe("deferred");
+		await expect(
+			ownerClient.report.generate({ analysisRunId: "missing_run" }),
+		).rejects.toMatchObject({ code: "NOT_FOUND" });
 	});
 
 	it("integrates evidence router procedures in appRouter", async () => {

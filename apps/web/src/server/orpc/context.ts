@@ -11,6 +11,7 @@ import { auth } from "@/server/auth";
 import type { MembershipRole } from "@/server/auth/permissions";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
+import type { ReportStorage } from "@/server/storage/reports";
 import type { EvidenceStorage } from "@/server/storage/s3";
 
 export type RpcMembership = {
@@ -43,8 +44,10 @@ export type RpcContext = {
 	membershipError?: MembershipErrorType | null;
 	repos?: RpcRepositories;
 	storage?: EvidenceStorage;
+	reportStorage?: ReportStorage;
 	analyzerClient?: AnalyzerClient;
 	executeTx?: TransactionExecutor;
+	now?: () => Date;
 };
 
 export type AuthClientLike = {
@@ -101,8 +104,10 @@ export async function createRpcContext(
 		dbClient?: typeof db;
 		repos?: RpcRepositories;
 		storage?: EvidenceStorage;
+		reportStorage?: ReportStorage;
 		analyzerClient?: AnalyzerClient;
 		executeTx?: TransactionExecutor;
+		now?: () => Date;
 	},
 ): Promise<RpcContext> {
 	const requestId =
@@ -121,8 +126,10 @@ export async function createRpcContext(
 			user: null,
 			repos: dependencies?.repos,
 			storage: dependencies?.storage,
+			reportStorage: dependencies?.reportStorage,
 			analyzerClient: dependencies?.analyzerClient,
 			executeTx: dependencies?.executeTx,
+			now: dependencies?.now,
 		};
 	}
 
@@ -154,8 +161,10 @@ export async function createRpcContext(
 			membershipError,
 			repos: dependencies?.repos,
 			storage: dependencies?.storage,
+			reportStorage: dependencies?.reportStorage,
 			analyzerClient: dependencies?.analyzerClient,
 			executeTx: dependencies?.executeTx,
+			now: dependencies?.now,
 		};
 	}
 
@@ -211,8 +220,10 @@ export async function createRpcContext(
 			membershipError: "not_member",
 			repos: dependencies?.repos,
 			storage: dependencies?.storage,
+			reportStorage: dependencies?.reportStorage,
 			analyzerClient: dependencies?.analyzerClient,
 			executeTx: dependencies?.executeTx,
+			now: dependencies?.now,
 		};
 	}
 
@@ -226,7 +237,9 @@ export async function createRpcContext(
 		membershipError: null,
 		repos: dependencies?.repos,
 		storage: dependencies?.storage,
+		reportStorage: dependencies?.reportStorage,
 		analyzerClient: dependencies?.analyzerClient,
 		executeTx: dependencies?.executeTx,
+		now: dependencies?.now,
 	};
 }
