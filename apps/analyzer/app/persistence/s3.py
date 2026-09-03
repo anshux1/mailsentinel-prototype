@@ -23,7 +23,12 @@ class S3EvidenceStore:
             region_name=settings.s3_region,
             aws_access_key_id=settings.s3_access_key_id,
             aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
-            config=Config(s3={"addressing_style": "path" if settings.s3_force_path_style else "auto"}),
+            config=Config(
+                connect_timeout=max(1.0, min(3.0, settings.execution_timeout_seconds / 6)),
+                read_timeout=max(1.0, settings.execution_timeout_seconds / 3),
+                retries={"max_attempts": 2, "mode": "standard"},
+                s3={"addressing_style": "path" if settings.s3_force_path_style else "auto"},
+            ),
         )
         self.bucket = settings.s3_bucket
 

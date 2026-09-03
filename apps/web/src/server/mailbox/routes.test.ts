@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -28,8 +29,9 @@ vi.mock("@/server/auth", () => ({
 	},
 }));
 
-// Mock db memberships
+// Mock db memberships and one-time OAuth state consumption
 let memberRole = "owner";
+let oauthStateAvailable = true;
 vi.mock("@/server/db", () => ({
 	db: {
 		query: {
@@ -45,6 +47,15 @@ vi.mock("@/server/db", () => ({
 				}),
 			},
 		},
+		delete: vi.fn(() => ({
+			where: vi.fn(() => ({
+				returning: vi.fn(async () => {
+					if (!oauthStateAvailable) return [];
+					oauthStateAvailable = false;
+					return [{ expiresAt: new Date(Date.now() + 60_000) }];
+				}),
+			})),
+		})),
 		insert: vi.fn(() => ({
 			values: vi.fn(() => ({
 				onConflictDoUpdate: vi.fn(() => ({
@@ -172,8 +183,9 @@ describe("Mailbox OAuth Routes (/start & /callback)", () => {
 			expect(response.status).toBe(302);
 			const location = response.headers.get("location");
 			expect(location).toBeDefined();
+			if (!location) throw new Error("redirect location missing");
 
-			const redirectUrl = new URL(location!);
+			const redirectUrl = new URL(location);
 			expect(redirectUrl.origin).toBe("https://accounts.google.com");
 			expect(redirectUrl.pathname).toBe("/o/oauth2/v2/auth");
 			expect(redirectUrl.searchParams.get("client_id")).toBe(
@@ -208,7 +220,7 @@ describe("Mailbox OAuth Routes (/start & /callback)", () => {
 			const response = await callbackHandler(request);
 			expect(response.status).toBe(302);
 			const location = response.headers.get("location");
-			expect(location).toContain("error=access_denied");
+			expect(location).toContain("error=oauth_denied");
 		});
 
 		it("redirects to error when state is invalid or tampered", async () => {
@@ -231,6 +243,7 @@ describe("Mailbox OAuth Routes (/start & /callback)", () => {
 			).MAILBOX_CONNECTORS_ENABLED = true;
 			currentSession = mockSession;
 			memberRole = "owner";
+			oauthStateAvailable = true;
 
 			const verifier = generateCodeVerifier();
 			const validState = createSignedOAuthState(
@@ -242,13 +255,20 @@ describe("Mailbox OAuth Routes (/start & /callback)", () => {
 				env.MAILBOX_TOKEN_ENCRYPTION_KEY,
 			);
 
+			const stateBinding = createHash("sha256")
+				.update(validState)
+				.digest("base64url");
 			const request = new Request(
 				`http://localhost:3000/api/mailbox/gmail/callback?code=valid_code_123&state=${validState}`,
+				{ headers: { cookie: `mailbox_oauth_state=${stateBinding}` } },
 			);
 			const response = await callbackHandler(request);
 			expect(response.status).toBe(302);
 			const location = response.headers.get("location");
 			expect(location).toContain("mailbox_connected=true");
+
+			const replay = await callbackHandler(request);
+			expect(replay.headers.get("location")).toContain("error=invalid_state");
 		});
 	});
 });

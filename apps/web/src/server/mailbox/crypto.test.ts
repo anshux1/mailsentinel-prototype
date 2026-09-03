@@ -2,12 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import {
-	decryptToken,
-	encryptToken,
-	getEncryptionKey,
-	MailboxCryptoError,
-} from "./crypto";
+import { decryptToken, encryptToken, MailboxCryptoError } from "./crypto";
 
 describe("Mailbox Token Crypto (AES-256-GCM)", () => {
 	const testKeyHex =
@@ -35,8 +30,8 @@ describe("Mailbox Token Crypto (AES-256-GCM)", () => {
 		// Flip a character in the ciphertext
 		const tamperedCiphertext =
 			encrypted.encryptedRefreshToken.slice(0, 4) === "0000"
-				? "ffff" + encrypted.encryptedRefreshToken.slice(4)
-				: "0000" + encrypted.encryptedRefreshToken.slice(4);
+				? `ffff${encrypted.encryptedRefreshToken.slice(4)}`
+				: `0000${encrypted.encryptedRefreshToken.slice(4)}`;
 
 		expect(() =>
 			decryptToken(
@@ -53,8 +48,8 @@ describe("Mailbox Token Crypto (AES-256-GCM)", () => {
 		const encrypted = encryptToken(sampleToken, testKeyHex);
 		const tamperedNonce =
 			encrypted.tokenNonce.slice(0, 2) === "aa"
-				? "bb" + encrypted.tokenNonce.slice(2)
-				: "aa" + encrypted.tokenNonce.slice(2);
+				? `bb${encrypted.tokenNonce.slice(2)}`
+				: `aa${encrypted.tokenNonce.slice(2)}`;
 
 		expect(() =>
 			decryptToken(

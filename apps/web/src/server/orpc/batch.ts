@@ -10,6 +10,23 @@ import { z } from "zod";
 import { db } from "@/server/db";
 import { viewerProcedure } from "./middleware";
 
+const identifierSchema = z
+	.string()
+	.min(1)
+	.max(200)
+	.regex(/^[A-Za-z0-9_-]+$/);
+
+const safeBatchMetadataSchema = z.object({
+	containerFormat: z
+		.enum(["mbox", "bare_concatenation", "multipart/digest", "single"])
+		.optional(),
+	segmentCount: z.number().int().nonnegative().optional(),
+	childCount: z.number().int().nonnegative().optional(),
+	provider: z.enum(["gmail"]).optional(),
+	label: z.string().max(200).nullable().optional(),
+	degradationReason: z.enum(["analyzer_segmentation_unavailable"]).optional(),
+});
+
 export const batchOutputSchema = z.object({
 	id: z.string(),
 	organizationId: z.string(),
@@ -21,7 +38,7 @@ export const batchOutputSchema = z.object({
 	readyCount: z.number().int(),
 	failedCount: z.number().int(),
 	failureReason: z.string().nullable().optional(),
-	metadata: z.record(z.string(), z.unknown()),
+	metadata: safeBatchMetadataSchema,
 	createdAt: z.union([z.date(), z.string()]),
 	updatedAt: z.union([z.date(), z.string()]),
 });
@@ -40,14 +57,14 @@ export function toBatchOutput(record: IngestionBatchShell): BatchOutput {
 		readyCount: record.readyCount,
 		failedCount: record.failedCount,
 		failureReason: record.failureReason ?? null,
-		metadata: (record.metadata as Record<string, unknown>) ?? {},
+		metadata: safeBatchMetadataSchema.parse(record.metadata ?? {}),
 		createdAt: record.createdAt,
 		updatedAt: record.updatedAt,
 	};
 }
 
 export const listBatchesInput = z.object({
-	caseId: z.string().min(1, "Case ID is required"),
+	caseId: identifierSchema,
 	limit: z.number().int().min(1).max(100).default(50).optional(),
 	cursor: z
 		.string()
@@ -63,8 +80,8 @@ export const batchListOutputSchema = z.object({
 });
 
 export const getBatchInput = z.object({
-	batchId: z.string().min(1, "Batch ID is required"),
-	caseId: z.string().optional(),
+	batchId: identifierSchema,
+	caseId: identifierSchema.optional(),
 });
 
 export const batchRouter = {

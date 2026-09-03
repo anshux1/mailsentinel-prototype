@@ -13,6 +13,18 @@ import {
 	type GmailTokenResponse,
 } from "./types";
 
+function retryAfterMs(response: Response): number {
+	const value = response.headers.get("retry-after");
+	if (!value) return 1000;
+	const seconds = Number(value);
+	if (Number.isFinite(seconds) && seconds >= 0)
+		return Math.min(60_000, seconds * 1000);
+	const date = Date.parse(value);
+	return Number.isNaN(date)
+		? 1000
+		: Math.min(60_000, Math.max(0, date - Date.now()));
+}
+
 export interface HttpGmailClientOptions {
 	clientId?: string;
 	clientSecret?: string;
@@ -138,7 +150,8 @@ export class HttpGmailClient implements GmailClient {
 
 		if (!res.ok) {
 			if (res.status === 401) throw new GmailAuthError();
-			if (res.status === 429) throw new GmailRateLimitError();
+			if (res.status === 429)
+				throw new GmailRateLimitError(undefined, retryAfterMs(res));
 			throw new GmailError(`Get profile failed with status ${res.status}`);
 		}
 
@@ -186,7 +199,8 @@ export class HttpGmailClient implements GmailClient {
 
 		if (!res.ok) {
 			if (res.status === 401) throw new GmailAuthError();
-			if (res.status === 429) throw new GmailRateLimitError();
+			if (res.status === 429)
+				throw new GmailRateLimitError(undefined, retryAfterMs(res));
 			throw new GmailError(`List messages failed with status ${res.status}`);
 		}
 
@@ -234,7 +248,8 @@ export class HttpGmailClient implements GmailClient {
 
 		if (!res.ok) {
 			if (res.status === 401) throw new GmailAuthError();
-			if (res.status === 429) throw new GmailRateLimitError();
+			if (res.status === 429)
+				throw new GmailRateLimitError(undefined, retryAfterMs(res));
 			throw new GmailError(`List history failed with status ${res.status}`);
 		}
 
@@ -272,7 +287,8 @@ export class HttpGmailClient implements GmailClient {
 
 		if (!res.ok) {
 			if (res.status === 401) throw new GmailAuthError();
-			if (res.status === 429) throw new GmailRateLimitError();
+			if (res.status === 429)
+				throw new GmailRateLimitError(undefined, retryAfterMs(res));
 			throw new GmailError(`Get message failed with status ${res.status}`);
 		}
 
@@ -327,11 +343,12 @@ export class MemoryGmailClient implements GmailClient {
 		});
 	}
 
-	async exchangeCode(_params: {
+	async exchangeCode(params: {
 		code: string;
 		codeVerifier: string;
 		redirectUri: string;
 	}): Promise<GmailTokenResponse> {
+		void params;
 		if (this.simulateAuthError) {
 			throw new GmailAuthError("Simulated token exchange failure");
 		}
@@ -344,9 +361,10 @@ export class MemoryGmailClient implements GmailClient {
 		};
 	}
 
-	async refreshAccessToken(_params: {
+	async refreshAccessToken(params: {
 		refreshToken: string;
 	}): Promise<{ accessToken: string; expiresIn?: number }> {
+		void params;
 		if (this.simulateAuthError) {
 			throw new GmailAuthError("Simulated token refresh failure");
 		}
@@ -356,7 +374,8 @@ export class MemoryGmailClient implements GmailClient {
 		};
 	}
 
-	async getProfile(_params: { accessToken: string }): Promise<GmailProfile> {
+	async getProfile(params: { accessToken: string }): Promise<GmailProfile> {
+		void params;
 		if (this.simulateAuthError) throw new GmailAuthError();
 		return { ...this.profile };
 	}
@@ -450,7 +469,6 @@ export class MemoryGmailClient implements GmailClient {
 	}
 }
 
-export const defaultGmailClient: GmailClient =
-	env.WEB_DATA_MODE === "live"
-		? new HttpGmailClient()
-		: new MemoryGmailClient();
+// Production code always uses the real provider. Tests inject MemoryGmailClient
+// through the request context or runMailboxSync options.
+export const defaultGmailClient: GmailClient = new HttpGmailClient();

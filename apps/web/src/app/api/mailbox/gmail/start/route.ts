@@ -1,4 +1,5 @@
-import { memberships } from "@mailsentinel/db";
+import { createHash } from "node:crypto";
+import { memberships, verification } from "@mailsentinel/db";
 import { and, eq } from "drizzle-orm";
 import { env } from "@/env";
 import { auth } from "@/server/auth";
@@ -83,5 +84,18 @@ export async function GET(request: Request): Promise<Response> {
 		codeChallenge,
 	});
 
-	return Response.redirect(googleAuthUrl, 302);
+	const stateBinding = createHash("sha256").update(state).digest("base64url");
+	await db.insert(verification).values({
+		id: crypto.randomUUID(),
+		identifier: `mailbox-oauth:${stateBinding}`,
+		value: stateBinding,
+		expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+	});
+	return new Response(null, {
+		status: 302,
+		headers: {
+			Location: googleAuthUrl,
+			"Set-Cookie": `mailbox_oauth_state=${stateBinding}; Path=/api/mailbox/gmail/callback; HttpOnly; SameSite=Lax; Max-Age=900${new URL(request.url).protocol === "https:" ? "; Secure" : ""}`,
+		},
+	});
 }

@@ -114,7 +114,10 @@ export type TenantContext = { organizationId: string };
 export type TenantCaseKey = TenantContext & { caseId: string };
 
 export type CaseShell = typeof schema.cases.$inferSelect;
-export type EvidenceShell = typeof schema.evidenceMetadata.$inferSelect;
+type EvidenceRecord = typeof schema.evidenceMetadata.$inferSelect;
+export type EvidenceShell = Omit<EvidenceRecord, "summary"> & {
+	summary?: EvidenceRecord["summary"];
+};
 export type AnalysisRunShell = typeof schema.analysisRuns.$inferSelect;
 export type ReportShell = typeof schema.reports.$inferSelect;
 export type AuditRecordShell = typeof schema.auditRecords.$inferSelect;
@@ -132,6 +135,7 @@ export type IngestionBatchSource = (typeof schema.ingestionBatchSource.enumValue
 export type IngestionBatchStatus = (typeof schema.ingestionBatchStatus.enumValues)[number];
 export type MailboxProvider = (typeof schema.mailboxProvider.enumValues)[number];
 export type MailboxConnectionStatus = (typeof schema.mailboxConnectionStatus.enumValues)[number];
+export type EvidenceSummary = NonNullable<EvidenceShell["summary"]>;
 
 export type CreateCaseInput = TenantContext & { title: string; id?: string };
 
@@ -151,6 +155,7 @@ export interface CreatePendingEvidenceInput extends TenantCaseKey {
 	batchId?: string | null;
 	sequence?: number | null;
 	sourceMessageId?: string | null;
+	summary?: EvidenceSummary | null;
 }
 
 export interface CreateVerifiedEvidenceInput extends TenantCaseKey {
@@ -163,6 +168,7 @@ export interface CreateVerifiedEvidenceInput extends TenantCaseKey {
 	batchId?: string | null;
 	sequence?: number | null;
 	sourceMessageId?: string | null;
+	summary?: EvidenceSummary | null;
 }
 
 export interface ListEvidenceByBatchInput extends TenantContext {
@@ -211,6 +217,26 @@ export interface IncrementBatchCountsInput extends TenantContext {
 	failedIncrement?: number;
 }
 
+export interface FinalizeBatchChildrenInput extends TenantCaseKey {
+	batchId: string;
+	children: CreateVerifiedEvidenceInput[];
+	metadata?: Record<string, unknown>;
+}
+
+export interface FinalizeBatchChildrenResult {
+	batch: IngestionBatchShell;
+	children: EvidenceShell[];
+	createdChildren: EvidenceShell[];
+}
+
+export interface SetBatchCountsInput extends TenantContext {
+	batchId: string;
+	caseId?: string;
+	messageCount: number;
+	readyCount: number;
+	failedCount: number;
+}
+
 export interface UpsertMailboxConnectionInput extends TenantContext {
 	id?: string;
 	provider: MailboxProvider;
@@ -235,6 +261,10 @@ export interface ListMailboxConnectionsInput extends TenantContext {
 	limit?: number;
 	offset?: number;
 	cursor?: string | null;
+}
+
+export interface BeginMailboxSyncInput extends TenantContext {
+	connectionId: string;
 }
 
 export interface UpdateMailboxCursorAndStatusInput extends TenantContext {
@@ -484,12 +514,15 @@ export interface IngestionBatchRepository {
 	listBatchesByCase(input: ListIngestionBatchesInput): Promise<IngestionBatchShell[]>;
 	transitionStatus(input: TransitionBatchStatusInput): Promise<IngestionBatchShell>;
 	incrementCounts(input: IncrementBatchCountsInput): Promise<IngestionBatchShell>;
+	setCounts(input: SetBatchCountsInput): Promise<IngestionBatchShell>;
+	finalizeChildren(input: FinalizeBatchChildrenInput): Promise<FinalizeBatchChildrenResult>;
 }
 
 export interface MailboxConnectionRepository {
 	upsertConnection(input: UpsertMailboxConnectionInput): Promise<MailboxConnectionShell>;
 	getConnection(input: GetMailboxConnectionInput): Promise<MailboxConnectionShell | null>;
 	listConnections(input: ListMailboxConnectionsInput): Promise<MailboxConnectionShell[]>;
+	beginSync(input: BeginMailboxSyncInput): Promise<MailboxConnectionShell>;
 	updateCursorAndStatus(input: UpdateMailboxCursorAndStatusInput): Promise<MailboxConnectionShell>;
 	deleteConnection(input: DeleteMailboxConnectionInput): Promise<boolean>;
 }
@@ -627,6 +660,7 @@ export class DrizzleEvidenceRepository implements EvidenceRepository {
 					batchId: input.batchId ?? null,
 					sequence: input.sequence ?? null,
 					sourceMessageId: input.sourceMessageId ?? null,
+					summary: input.summary ?? null,
 				})
 				.returning();
 			if (!created) throw new RepositoryError("Evidence creation returned no record");
@@ -657,6 +691,7 @@ export class DrizzleEvidenceRepository implements EvidenceRepository {
 					batchId: input.batchId ?? null,
 					sequence: input.sequence ?? null,
 					sourceMessageId: input.sourceMessageId ?? null,
+					summary: input.summary ?? null,
 				})
 				.returning();
 			if (!created) throw new RepositoryError("Evidence creation returned no record");
@@ -1743,6 +1778,120 @@ export class DrizzleIngestionBatchRepository implements IngestionBatchRepository
 			mapDatabaseError(err, "incrementBatchCounts");
 		}
 	}
+
+	async setCounts(input: SetBatchCountsInput): Promise<IngestionBatchShell> {
+		assertOrganizationId(input.organizationId);
+		if (
+			input.messageCount < 0 ||
+			input.readyCount < 0 ||
+			input.failedCount < 0 ||
+			input.readyCount + input.failedCount > input.messageCount
+		) {
+			throw new InvalidStateError("Invalid ingestion batch counts");
+		}
+		try {
+			const conditions = [
+				eq(schema.ingestionBatches.organizationId, input.organizationId),
+				eq(schema.ingestionBatches.id, input.batchId),
+			];
+			if (input.caseId) conditions.push(eq(schema.ingestionBatches.caseId, input.caseId));
+			const [updated] = await this.db
+				.update(schema.ingestionBatches)
+				.set({
+					messageCount: input.messageCount,
+					readyCount: input.readyCount,
+					failedCount: input.failedCount,
+					updatedAt: new Date(),
+				})
+				.where(and(...conditions))
+				.returning();
+			if (!updated) throw new NotFoundError("ingestion_batch", input.batchId, input.organizationId);
+			return updated;
+		} catch (err) {
+			mapDatabaseError(err, "setBatchCounts");
+		}
+	}
+
+	async finalizeChildren(input: FinalizeBatchChildrenInput): Promise<FinalizeBatchChildrenResult> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const database = this.db as PostgresJsDatabase<typeof schema>;
+			return await database.transaction(async (tx) => {
+				const now = new Date();
+				const values = input.children.map((child) => ({
+					id: child.id ?? `ev_${randomUUID()}`,
+					organizationId: input.organizationId,
+					caseId: input.caseId,
+					batchId: input.batchId,
+					sequence: child.sequence ?? null,
+					sourceMessageId: child.sourceMessageId ?? null,
+					summary: child.summary ?? null,
+					objectKey: child.objectKey,
+					sha256: child.sha256,
+					byteSize: child.byteSize,
+					contentType: child.contentType ?? "message/rfc822",
+					status: "verified" as const,
+					storedAt: now,
+					verifiedAt: now,
+					idempotencyKey: child.idempotencyKey ?? null,
+				}));
+				const createdChildren = values.length
+					? await tx.insert(schema.evidenceMetadata).values(values).onConflictDoNothing().returning()
+					: [];
+				const children = await tx
+					.select()
+					.from(schema.evidenceMetadata)
+					.where(
+						and(
+							eq(schema.evidenceMetadata.organizationId, input.organizationId),
+							eq(schema.evidenceMetadata.caseId, input.caseId),
+							eq(schema.evidenceMetadata.batchId, input.batchId),
+						),
+					)
+					.orderBy(asc(schema.evidenceMetadata.sequence));
+				if (children.length !== input.children.length) {
+					throw new ConflictError("Container children conflict with durable batch state");
+				}
+				for (let index = 0; index < children.length; index++) {
+					const actual = children[index];
+					const expected = input.children[index];
+					if (
+						!actual ||
+						!expected ||
+						actual.sequence !== expected.sequence ||
+						actual.sha256 !== expected.sha256 ||
+						actual.byteSize !== expected.byteSize ||
+						actual.objectKey !== expected.objectKey
+					) {
+						throw new ConflictError("Container children conflict with analyzer output");
+					}
+				}
+				const [batch] = await tx
+					.update(schema.ingestionBatches)
+					.set({
+						status: "ready",
+						messageCount: children.length,
+						readyCount: children.length,
+						failedCount: 0,
+						failureReason: null,
+						...(input.metadata === undefined ? {} : { metadata: input.metadata }),
+						updatedAt: now,
+					})
+					.where(
+						and(
+							eq(schema.ingestionBatches.organizationId, input.organizationId),
+							eq(schema.ingestionBatches.caseId, input.caseId),
+							eq(schema.ingestionBatches.id, input.batchId),
+						),
+					)
+					.returning();
+				if (!batch) throw new NotFoundError("ingestion_batch", input.batchId, input.organizationId);
+				return { batch, children, createdChildren };
+			});
+		} catch (err) {
+			mapDatabaseError(err, "finalizeBatchChildren");
+		}
+	}
 }
 
 export class DrizzleMailboxConnectionRepository implements MailboxConnectionRepository {
@@ -1751,6 +1900,7 @@ export class DrizzleMailboxConnectionRepository implements MailboxConnectionRepo
 	async upsertConnection(input: UpsertMailboxConnectionInput): Promise<MailboxConnectionShell> {
 		assertOrganizationId(input.organizationId);
 		try {
+			const accountEmail = input.accountEmail.trim().toLowerCase();
 			const id = input.id ?? `conn_${randomUUID()}`;
 			const updateSet: Partial<typeof schema.mailboxConnections.$inferInsert> = {
 				encryptedRefreshToken: input.encryptedRefreshToken,
@@ -1769,7 +1919,7 @@ export class DrizzleMailboxConnectionRepository implements MailboxConnectionRepo
 					id,
 					organizationId: input.organizationId,
 					provider: input.provider,
-					accountEmail: input.accountEmail,
+					accountEmail,
 					encryptedRefreshToken: input.encryptedRefreshToken,
 					tokenNonce: input.tokenNonce,
 					scopes: input.scopes ?? null,
@@ -1853,6 +2003,29 @@ export class DrizzleMailboxConnectionRepository implements MailboxConnectionRepo
 			return await query;
 		} catch (err) {
 			mapDatabaseError(err, "listMailboxConnections");
+		}
+	}
+
+	async beginSync(input: BeginMailboxSyncInput): Promise<MailboxConnectionShell> {
+		assertOrganizationId(input.organizationId);
+		try {
+			const [updated] = await this.db
+				.update(schema.mailboxConnections)
+				.set({ status: "syncing", lastFailureReason: null, updatedAt: new Date() })
+				.where(
+					and(
+						eq(schema.mailboxConnections.organizationId, input.organizationId),
+						eq(schema.mailboxConnections.id, input.connectionId),
+						inArray(schema.mailboxConnections.status, ["connected", "error"]),
+					),
+				)
+				.returning();
+			if (updated) return updated;
+			const existing = await this.getConnection(input);
+			if (!existing) throw new NotFoundError("mailbox_connection", input.connectionId, input.organizationId);
+			throw new ConflictError("Mailbox synchronization is already active or disconnected");
+		} catch (err) {
+			mapDatabaseError(err, "beginMailboxSync");
 		}
 	}
 
@@ -2023,6 +2196,18 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 			}
 		}
 
+		if (
+			input.batchId &&
+			input.sequence !== null &&
+			input.sequence !== undefined &&
+			this.records.some(
+				(e) =>
+					e.organizationId === input.organizationId && e.batchId === input.batchId && e.sequence === input.sequence,
+			)
+		) {
+			throw new ConflictError("Evidence sequence already exists in this batch");
+		}
+
 		const now = new Date();
 		const record: EvidenceShell = {
 			id: input.id ?? `ev_${randomUUID()}`,
@@ -2041,6 +2226,7 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 			batchId: input.batchId ?? null,
 			sequence: input.sequence ?? null,
 			sourceMessageId: input.sourceMessageId ?? null,
+			summary: input.summary ?? null,
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -2088,6 +2274,18 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 			}
 		}
 
+		if (
+			input.batchId &&
+			input.sequence !== null &&
+			input.sequence !== undefined &&
+			this.records.some(
+				(e) =>
+					e.organizationId === input.organizationId && e.batchId === input.batchId && e.sequence === input.sequence,
+			)
+		) {
+			throw new ConflictError("Evidence sequence already exists in this batch");
+		}
+
 		const now = new Date();
 		const record: EvidenceShell = {
 			id: input.id ?? `ev_${randomUUID()}`,
@@ -2106,6 +2304,7 @@ export class MemoryEvidenceRepository implements EvidenceRepository {
 			batchId: input.batchId ?? null,
 			sequence: input.sequence ?? null,
 			sourceMessageId: input.sourceMessageId ?? null,
+			summary: input.summary ?? null,
 			createdAt: now,
 			updatedAt: now,
 		};
@@ -2924,8 +3123,92 @@ export class MemoryIngestionBatchRepository implements IngestionBatchRepository 
 
 		existing.readyCount += input.readyIncrement ?? 0;
 		existing.failedCount += input.failedIncrement ?? 0;
+		if (
+			existing.readyCount < 0 ||
+			existing.failedCount < 0 ||
+			existing.readyCount + existing.failedCount > existing.messageCount
+		) {
+			throw new InvalidStateError("Invalid ingestion batch counts");
+		}
 		existing.updatedAt = new Date();
 		return { ...existing };
+	}
+
+	async setCounts(input: SetBatchCountsInput): Promise<IngestionBatchShell> {
+		assertOrganizationId(input.organizationId);
+		if (
+			input.messageCount < 0 ||
+			input.readyCount < 0 ||
+			input.failedCount < 0 ||
+			input.readyCount + input.failedCount > input.messageCount
+		) {
+			throw new InvalidStateError("Invalid ingestion batch counts");
+		}
+		const existing = this.records.find(
+			(b) =>
+				b.organizationId === input.organizationId &&
+				b.id === input.batchId &&
+				(input.caseId ? b.caseId === input.caseId : true),
+		);
+		if (!existing) throw new NotFoundError("ingestion_batch", input.batchId, input.organizationId);
+		existing.messageCount = input.messageCount;
+		existing.readyCount = input.readyCount;
+		existing.failedCount = input.failedCount;
+		existing.updatedAt = new Date();
+		return { ...existing };
+	}
+
+	async finalizeChildren(input: FinalizeBatchChildrenInput): Promise<FinalizeBatchChildrenResult> {
+		assertOrganizationId(input.organizationId);
+		if (!this.evidence) throw new DependencyError("Evidence repository is unavailable", "evidence_metadata");
+		const batch = this.records.find(
+			(item) =>
+				item.organizationId === input.organizationId && item.caseId === input.caseId && item.id === input.batchId,
+		);
+		if (!batch) throw new NotFoundError("ingestion_batch", input.batchId, input.organizationId);
+		const evidenceStart = this.evidence.length;
+		const batchSnapshot = { ...batch };
+		const evidenceRepo = new MemoryEvidenceRepository(this.evidence, this.cases, this.records);
+		const createdChildren: EvidenceShell[] = [];
+		try {
+			const existing = await evidenceRepo.listEvidenceByBatch({
+				organizationId: input.organizationId,
+				caseId: input.caseId,
+				batchId: input.batchId,
+			});
+			const bySequence = new Map(existing.map((item) => [item.sequence, item]));
+			for (const expected of input.children) {
+				const current = bySequence.get(expected.sequence ?? null);
+				if (current) {
+					if (
+						current.sha256 !== expected.sha256 ||
+						current.byteSize !== expected.byteSize ||
+						current.objectKey !== expected.objectKey
+					)
+						throw new ConflictError("Container children conflict with analyzer output");
+					continue;
+				}
+				createdChildren.push(await evidenceRepo.createVerified({ ...expected, batchId: input.batchId }));
+			}
+			const children = await evidenceRepo.listEvidenceByBatch({
+				organizationId: input.organizationId,
+				caseId: input.caseId,
+				batchId: input.batchId,
+			});
+			if (children.length !== input.children.length) throw new ConflictError("Incomplete container batch");
+			batch.status = "ready";
+			batch.messageCount = children.length;
+			batch.readyCount = children.length;
+			batch.failedCount = 0;
+			batch.failureReason = null;
+			if (input.metadata !== undefined) batch.metadata = input.metadata;
+			batch.updatedAt = new Date();
+			return { batch: { ...batch }, children, createdChildren };
+		} catch (error) {
+			this.evidence.splice(evidenceStart);
+			Object.assign(batch, batchSnapshot);
+			throw error;
+		}
 	}
 }
 
@@ -2934,11 +3217,12 @@ export class MemoryMailboxConnectionRepository implements MailboxConnectionRepos
 
 	async upsertConnection(input: UpsertMailboxConnectionInput): Promise<MailboxConnectionShell> {
 		assertOrganizationId(input.organizationId);
+		const accountEmail = input.accountEmail.trim().toLowerCase();
 		const existingIndex = this.records.findIndex(
 			(c) =>
 				c.organizationId === input.organizationId &&
 				c.provider === input.provider &&
-				c.accountEmail === input.accountEmail,
+				c.accountEmail.toLowerCase() === accountEmail,
 		);
 
 		const now = new Date();
@@ -2962,7 +3246,7 @@ export class MemoryMailboxConnectionRepository implements MailboxConnectionRepos
 			id: input.id ?? `conn_${randomUUID()}`,
 			organizationId: input.organizationId,
 			provider: input.provider,
-			accountEmail: input.accountEmail,
+			accountEmail,
 			encryptedRefreshToken: input.encryptedRefreshToken,
 			tokenNonce: input.tokenNonce,
 			scopes: input.scopes ?? null,
@@ -3016,6 +3300,19 @@ export class MemoryMailboxConnectionRepository implements MailboxConnectionRepos
 		if (input.offset !== undefined) list = list.slice(input.offset);
 		if (input.limit !== undefined) list = list.slice(0, input.limit);
 		return list.map((c) => ({ ...c }));
+	}
+
+	async beginSync(input: BeginMailboxSyncInput): Promise<MailboxConnectionShell> {
+		assertOrganizationId(input.organizationId);
+		const existing = this.records.find((c) => c.organizationId === input.organizationId && c.id === input.connectionId);
+		if (!existing) throw new NotFoundError("mailbox_connection", input.connectionId, input.organizationId);
+		if (existing.status === "syncing" || existing.status === "disconnected") {
+			throw new ConflictError("Mailbox synchronization is already active or disconnected");
+		}
+		existing.status = "syncing";
+		existing.lastFailureReason = null;
+		existing.updatedAt = new Date();
+		return { ...existing };
 	}
 
 	async updateCursorAndStatus(input: UpdateMailboxCursorAndStatusInput): Promise<MailboxConnectionShell> {

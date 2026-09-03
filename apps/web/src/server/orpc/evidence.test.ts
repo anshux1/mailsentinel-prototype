@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
 	type CaseShell,
 	type EvidenceShell,
+	type IngestionBatchShell,
 	type MembershipShell,
 	MemoryAuditRepository,
 	MemoryCaseRepository,
@@ -99,9 +100,18 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 	function setupTest(overrides: Partial<RpcContext> = {}) {
 		const cases = [caseOrgAlpha1, caseOrgAlpha2, caseOrgBeta];
 		const evidenceList: EvidenceShell[] = [];
+		const batches: IngestionBatchShell[] = [];
 		const caseRepo = new MemoryCaseRepository(cases);
-		const evidenceRepo = new MemoryEvidenceRepository(evidenceList, cases);
-		const batchRepo = new MemoryIngestionBatchRepository([], cases);
+		const evidenceRepo = new MemoryEvidenceRepository(
+			evidenceList,
+			cases,
+			batches,
+		);
+		const batchRepo = new MemoryIngestionBatchRepository(
+			batches,
+			cases,
+			evidenceList,
+		);
 		const auditRepo = new MemoryAuditRepository([]);
 		const membershipRepo = new MemoryMembershipRepository(memberships);
 		const storage = new MemoryEvidenceStorage();
@@ -283,13 +293,13 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			).rejects.toThrow();
 		});
 
-		it("rejects createUpload with byteSize exceeding MAX_EML_BYTES", async () => {
+		it("rejects createUpload with byteSize exceeding MAX_CONTAINER_BYTES", async () => {
 			const { client } = setupTest();
 
 			await expect(
 				client.evidence.createUpload({
 					caseId: "case_alpha_1",
-					byteSize: 30_000_000,
+					byteSize: 200_000_000,
 					sha256: sampleSha256,
 				}),
 			).rejects.toThrow();
@@ -1576,10 +1586,10 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 						sha256: createHash("sha256").update(msg1Content).digest("hex"),
 						summary: {
 							messageId: "<msg1@example.com>",
-							subject: null,
+							subject: "M1",
 							date: null,
-							fromAddress: null,
-							fromDisplayName: null,
+							fromAddress: "a@example.com",
+							fromDisplayName: "Alice",
 						},
 					},
 					{
@@ -1617,7 +1627,8 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 				caseId: "case_alpha_1",
 			});
 			expect(batches).toHaveLength(1);
-			const batch = batches[0]!;
+			const batch = batches[0];
+			if (!batch) throw new Error("expected container batch");
 			expect(batch.source).toBe("upload_container");
 			expect(batch.status).toBe("ready");
 			expect(batch.messageCount).toBe(2);
@@ -1635,8 +1646,11 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			expect(children[1]?.sourceMessageId).toBe("<msg2@example.com>");
 
 			// Check children are saved in storage under deterministic keys
-			expect(storage.hasObject(children[0]!.objectKey)).toBe(true);
-			expect(storage.hasObject(children[1]!.objectKey)).toBe(true);
+			const firstChild = children[0];
+			const secondChild = children[1];
+			if (!firstChild || !secondChild) throw new Error("expected two children");
+			expect(storage.hasObject(firstChild.objectKey)).toBe(true);
+			expect(storage.hasObject(secondChild.objectKey)).toBe(true);
 
 			// Check evidence.listByBatch API procedure
 			const listResult = await client.evidence.listByBatch({
@@ -1644,6 +1658,12 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			});
 			expect(listResult.items).toHaveLength(2);
 			expect(listResult.items[0]?.sequence).toBe(0);
+			expect(listResult.items[0]?.summary).toMatchObject({
+				from: "a@example.com",
+				fromDisplayName: "Alice",
+				subject: "M1",
+				messageId: "<msg1@example.com>",
+			});
 			expect(listResult.items[1]?.sequence).toBe(1);
 
 			// Check audit trail
@@ -1716,9 +1736,11 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			});
 			expect(batches).toHaveLength(1);
 
+			const firstBatch = batches[0];
+			if (!firstBatch) throw new Error("expected existing batch");
 			const children = await evidenceRepo.listEvidenceByBatch({
 				organizationId: "org_alpha",
-				batchId: batches[0]!.id,
+				batchId: firstBatch.id,
 			});
 			expect(children).toHaveLength(2); // Still 2, not duplicated!
 		});
@@ -1750,6 +1772,43 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 			expect(batches[0]?.status).toBe("ready");
 		});
 
+		it("rejects malicious segmentation offsets and digests before creating a batch", async () => {
+			const { client, analyzerClient, batchRepo, evidenceRepo } = setupTest();
+			const body = Buffer.from("12345\n67890");
+			analyzerClient.segmentResult = {
+				containerFormat: "mbox",
+				messageCount: 2,
+				segments: [
+					{ index: 0, byteOffset: 0, byteLength: 5, sha256: "a".repeat(64) },
+					{ index: 1, byteOffset: 999, byteLength: 5, sha256: "b".repeat(64) },
+				],
+			};
+			const pending = await client.evidence.createUpload({
+				caseId: "case_alpha_1",
+				byteSize: body.byteLength,
+				sha256: createHash("sha256").update(body).digest("hex"),
+			});
+			await expect(
+				client.evidence.completeUpload({
+					caseId: "case_alpha_1",
+					evidenceId: pending.id,
+					body: body.toString("base64"),
+				}),
+			).rejects.toMatchObject({ code: "BAD_GATEWAY" });
+			expect(
+				await batchRepo.listBatchesByCase({
+					organizationId: "org_alpha",
+					caseId: "case_alpha_1",
+				}),
+			).toHaveLength(0);
+			expect(
+				await evidenceRepo.listEvidenceByBatch({
+					organizationId: "org_alpha",
+					batchId: "nonexistent",
+				}),
+			).toHaveLength(0);
+		});
+
 		it("storage failure during child upload cleans up written objects and marks batch failed", async () => {
 			const { client, analyzerClient, batchRepo, storage, auditRepo } =
 				setupTest();
@@ -1762,13 +1821,13 @@ describe("Phase S4: Evidence Upload Orchestration", () => {
 						index: 0,
 						byteOffset: 0,
 						byteLength: 5,
-						sha256: "a".repeat(64),
+						sha256: createHash("sha256").update("12345").digest("hex"),
 					},
 					{
 						index: 1,
 						byteOffset: 6,
 						byteLength: 5,
-						sha256: "b".repeat(64),
+						sha256: createHash("sha256").update("67890").digest("hex"),
 					},
 				],
 			};

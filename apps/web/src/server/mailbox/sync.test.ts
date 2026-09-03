@@ -44,7 +44,7 @@ describe("Mailbox Sync Worker (runMailboxSync)", () => {
 			encryptedRefreshToken: encrypted.encryptedRefreshToken,
 			tokenNonce: encrypted.tokenNonce,
 			scopes: "https://www.googleapis.com/auth/gmail.readonly",
-			syncCursor: "1000",
+			syncCursor: null,
 			status: "connected",
 			lastSyncedAt: null,
 			lastFailureReason: null,
@@ -150,8 +150,10 @@ describe("Mailbox Sync Worker (runMailboxSync)", () => {
 		expect(env.evidenceList[0]?.idempotencyKey).toBe("gmail:conn_01:msg_001");
 
 		// Stored in private storage
+		const firstEvidence = env.evidenceList[0];
+		if (!firstEvidence) throw new Error("expected ingested evidence");
 		const head = await env.storage.headEvidence({
-			objectKey: env.evidenceList[0]!.objectKey,
+			objectKey: firstEvidence.objectKey,
 			organizationId: "org_alpha",
 			caseId: "case_01",
 		});
@@ -219,6 +221,35 @@ describe("Mailbox Sync Worker (runMailboxSync)", () => {
 
 		expect(result.readyCount).toBe(1);
 		expect(env.evidenceList).toHaveLength(1);
+	});
+
+	it("paginates message discovery while enforcing the total cap", async () => {
+		const env = createFixtures();
+		let calls = 0;
+		env.gmailClient.listMessages = vi.fn(async ({ pageToken }) => {
+			calls++;
+			return pageToken
+				? { messages: [{ id: "msg_002" }] }
+				: { messages: [{ id: "msg_001" }], nextPageToken: "page-2" };
+		});
+		const result = await runSync(env, { maxMessages: 2 });
+		expect(calls).toBe(2);
+		expect(result.readyCount).toBe(2);
+	});
+
+	it("rejects concurrent synchronization for the same connection", async () => {
+		const env = createFixtures();
+		const originalRefresh = env.gmailClient.refreshAccessToken.bind(
+			env.gmailClient,
+		);
+		env.gmailClient.refreshAccessToken = vi.fn(async (params) => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			return originalRefresh(params);
+		});
+		const first = runSync(env);
+		await new Promise((resolve) => setTimeout(resolve, 1));
+		await expect(runSync(env)).rejects.toThrow(/already active/);
+		await expect(first).resolves.toMatchObject({ status: "ready" });
 	});
 
 	it("degrades gracefully to partial status on rate limit (429)", async () => {

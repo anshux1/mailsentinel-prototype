@@ -56,29 +56,26 @@ describe("Mailbox OAuth (PKCE & Signed State)", () => {
 			expect(payload.timestamp).toBeLessThanOrEqual(Date.now());
 		});
 
-		it("detects tampering in state signature", () => {
-			const verifier = generateCodeVerifier();
+		it("detects tampering in encrypted state ciphertext", () => {
 			const state = createSignedOAuthState(
 				{
 					organizationId: "org_alpha",
 					userId: "user_owner",
-					codeVerifier: verifier,
+					codeVerifier: generateCodeVerifier(),
 				},
 				secretKey,
 			);
-
-			const [data, sig] = state.split(".");
-			const tamperedSig = sig!.startsWith("a")
-				? "b" + sig!.slice(1)
-				: "a" + sig!.slice(1);
-			const tamperedState = `${data}.${tamperedSig}`;
-
+			const parts = state.split(".");
+			expect(parts).toHaveLength(3);
+			const ciphertext = parts[2] ?? "";
+			const replacement = ciphertext.startsWith("a") ? "b" : "a";
+			parts[2] = `${replacement}${ciphertext.slice(1)}`;
 			expect(() =>
-				verifySignedOAuthState(tamperedState, 60_000, secretKey),
+				verifySignedOAuthState(parts.join("."), 60_000, secretKey),
 			).toThrow(OAuthStateError);
 		});
 
-		it("detects tampering in state payload data", () => {
+		it("does not expose organization, user, or PKCE verifier in state", () => {
 			const verifier = generateCodeVerifier();
 			const state = createSignedOAuthState(
 				{
@@ -88,21 +85,9 @@ describe("Mailbox OAuth (PKCE & Signed State)", () => {
 				},
 				secretKey,
 			);
-
-			const [data, sig] = state.split(".");
-			// Replace org_alpha with org_beta in base64url payload
-			const parsed = JSON.parse(
-				Buffer.from(data!, "base64url").toString("utf8"),
-			);
-			parsed.organizationId = "org_beta";
-			const tamperedData = Buffer.from(JSON.stringify(parsed), "utf8").toString(
-				"base64url",
-			);
-			const tamperedState = `${tamperedData}.${sig}`;
-
-			expect(() =>
-				verifySignedOAuthState(tamperedState, 60_000, secretKey),
-			).toThrow(OAuthStateError);
+			expect(state).not.toContain("org_alpha");
+			expect(state).not.toContain("user_owner");
+			expect(state).not.toContain(verifier);
 		});
 
 		it("rejects expired state", async () => {

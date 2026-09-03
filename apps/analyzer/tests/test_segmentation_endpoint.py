@@ -138,7 +138,7 @@ def test_timeout_path_returns_safely() -> None:
         "byteSize": len(data),
     }
 
-    with patch("app.main._run_segment_with_watchdog", side_effect=TimeoutError()):
+    with patch("app.main._run_segment_in_process", side_effect=TimeoutError()):
         res = client.post("/v1/evidence/segment", json=payload, headers={"Authorization": f"Bearer {token}"})
     assert res.status_code == 504
 

@@ -119,6 +119,10 @@ Contract drift is covered by the passing analyzer drift test. The clean-tree `pn
 | Testing | **B**. The suite is broad (532 passing tests across analyzer/database/server) and includes PostgreSQL/adversarial coverage. Important race, malicious-response, pagination, cancellation, and state-reconciliation paths are absent; no enforceable coverage threshold exists. |
 | Technical debt | **Moderate-high** around newly added batch/mailbox code; **moderate** elsewhere. |
 
+## Follow-up implementation completed
+
+The post-audit hardening pass implemented and tested: fail-closed analyzer intake with queue-reservation rollback; bounded S3 client timeouts; process-isolated analyzer and segmentation execution; runtime segmentation schema, boundary, and digest validation; transactional PostgreSQL container-child finalization; batch count invariants and uniqueness constraints; persisted child summaries; strict API identifiers and safe batch metadata; encrypted, cookie-bound, one-time OAuth state; conditional mailbox environment validation; production Gmail client selection; mailbox pagination, retries, concurrency locking, strict base64url/size checks, durable cursor advancement, and non-swallowed dispatch degradation; linearized bare-boundary scanning; explicit nested parse-unknown verdicts; dependency override; and regression coverage.
+
 ## Plan cleanup performed
 
 - `PLAN.md`: completed implementation details removed; now points to the active consolidated plan.

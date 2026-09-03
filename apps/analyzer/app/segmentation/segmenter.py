@@ -118,21 +118,17 @@ def find_bare_boundaries(raw: bytes, max_messages: int = 500) -> list[int]:
 
     boundaries = [0]
     pattern = re.compile(rb"(?:\r?\n\r?\n)([A-Za-z0-9_-]+:[ \t][^\r\n]*)")
-    current_pos = search_start
+    blank_pattern = re.compile(rb"\r?\n\r?\n")
 
-    while current_pos < len(raw):
-        m = pattern.search(raw, current_pos)
-        if not m:
-            break
+    # Search the original buffer with absolute positions. Repeatedly slicing the
+    # remaining suffix made adversarial input quadratic in both time and memory.
+    for m in pattern.finditer(raw, search_start):
         candidate_start = m.start(1)
-
-        # Candidate start must be terminated by a blank line
-        term_blank = re.search(rb"\r?\n\r?\n", raw[candidate_start:])
+        term_blank = blank_pattern.search(raw, candidate_start)
         if not term_blank:
-            current_pos = m.end()
-            continue
+            break
 
-        header_block = raw[candidate_start : candidate_start + term_blank.start()]
+        header_block = raw[candidate_start : term_blank.start()]
         lines = header_block.splitlines()
 
         valid = True
@@ -162,9 +158,6 @@ def find_bare_boundaries(raw: bytes, max_messages: int = 500) -> list[int]:
             boundaries.append(candidate_start)
             if len(boundaries) > max_messages:
                 return boundaries
-            current_pos = candidate_start + term_blank.end()
-        else:
-            current_pos = m.end()
 
     return boundaries
 
@@ -175,7 +168,7 @@ def detect_container(raw: bytes) -> ContainerFormat:
         return ContainerFormat.SINGLE
 
     # 1. mbox per RFC 4155 starts with "From "
-    clean_prefix = raw.lstrip(b"\xef\xbb\xbf")
+    clean_prefix = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
     if clean_prefix.startswith(b"From "):
         return ContainerFormat.MBOX
 
@@ -219,8 +212,8 @@ def segment(
     segments: list[ContainerSegment] = []
 
     if fmt == ContainerFormat.MBOX:
-        clean_prefix = raw.lstrip(b"\xef\xbb\xbf")
-        bom_offset = len(raw) - len(clean_prefix)
+        clean_prefix = raw[3:] if raw.startswith(b"\xef\xbb\xbf") else raw
+        bom_offset = 3 if raw.startswith(b"\xef\xbb\xbf") else 0
 
         offsets: list[int] = []
         if clean_prefix.startswith(b"From "):
@@ -259,25 +252,24 @@ def segment(
             )
 
     elif fmt == ContainerFormat.MULTIPART_DIGEST:
-        first_blank = re.search(rb"\r?\n\r?\n", raw[:10_000])
-        top_headers = raw[: first_blank.start()] if first_blank else raw[:10_000]
-        boundary_m = re.search(
-            rb"""(?i)content-type:\s*multipart/digest;[^\r\n]*boundary=["']?([^"'\s;\r\n]+)""",
-            top_headers,
-        )
+        first_blank = re.search(rb"\r?\n\r?\n", raw[:100_000])
+        top_headers = raw[: first_blank.start()] if first_blank else raw[:100_000]
+        try:
+            parsed_headers = BytesHeaderParser(policy=policy.default).parsebytes(top_headers + b"\r\n\r\n")
+            boundary_value = parsed_headers.get_boundary()
+        except Exception:
+            boundary_value = None
 
-        if not boundary_m:
+        if not boundary_value or len(boundary_value) > 200:
             fmt = ContainerFormat.SINGLE
         else:
-            boundary = boundary_m.group(1)
+            boundary = boundary_value.encode("ascii", "strict")
             delim = rb"--" + boundary
             pattern = re.compile(rb"(?:^|\r?\n)" + re.escape(delim) + rb"(--)?([ \t]*\r?\n)?")
-            matches = list(pattern.finditer(raw))
-
-            for i in range(len(matches) - 1):
-                m_curr = matches[i]
-                m_next = matches[i + 1]
-                if m_curr.group(1) == rb"--":
+            match_iter = pattern.finditer(raw)
+            m_curr = next(match_iter, None)
+            for m_next in match_iter:
+                if m_curr is None or m_curr.group(1) == rb"--":
                     break
 
                 part_start = m_curr.end()
@@ -323,6 +315,7 @@ def segment(
                         summary=summary,
                     )
                 )
+                m_curr = m_next
 
     elif fmt == ContainerFormat.BARE_CONCATENATION:
         boundaries = find_bare_boundaries(raw, max_messages=max_container_messages)

@@ -62,7 +62,44 @@ export function validateWebEnvironment(
 	values: Record<string, string | undefined>,
 ) {
 	rejectPublicSecretNames(values);
-	return webServerSchema.parse(values);
+	const parsed = webServerSchema.parse(values);
+	assertMailboxConfiguration(parsed);
+	return parsed;
+}
+
+function assertMailboxConfiguration(
+	values: z.infer<typeof webServerSchema>,
+): void {
+	if (!values.MAILBOX_CONNECTORS_ENABLED) return;
+	const encryptionKey = values.MAILBOX_TOKEN_ENCRYPTION_KEY;
+	if (!encryptionKey || Buffer.byteLength(encryptionKey, "utf8") < 32) {
+		throw new Error(
+			"MAILBOX_TOKEN_ENCRYPTION_KEY must contain at least 32 bytes when mailbox connectors are enabled",
+		);
+	}
+	if (!(values.GOOGLE_OAUTH_CLIENT_ID ?? values.GMAIL_CLIENT_ID)?.trim()) {
+		throw new Error(
+			"Google OAuth client ID is required when mailbox connectors are enabled",
+		);
+	}
+	if (
+		!(values.GOOGLE_OAUTH_CLIENT_SECRET ?? values.GMAIL_CLIENT_SECRET)?.trim()
+	) {
+		throw new Error(
+			"Google OAuth client secret is required when mailbox connectors are enabled",
+		);
+	}
+	if (!values.GMAIL_REDIRECT_URI) {
+		throw new Error(
+			"GMAIL_REDIRECT_URI is required when mailbox connectors are enabled",
+		);
+	}
+	if (
+		values.APP_ENV === "production" &&
+		new URL(values.GMAIL_REDIRECT_URI).protocol !== "https:"
+	) {
+		throw new Error("GMAIL_REDIRECT_URI must use HTTPS in production");
+	}
 }
 
 rejectPublicSecretNames(process.env);
@@ -97,3 +134,7 @@ export const env = createEnv({
 	},
 	skipValidation: process.env.NODE_ENV === "test",
 });
+
+if (process.env.NODE_ENV !== "test") {
+	assertMailboxConfiguration(env);
+}

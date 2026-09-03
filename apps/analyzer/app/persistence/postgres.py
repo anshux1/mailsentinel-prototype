@@ -140,6 +140,19 @@ class PostgresAnalysisRepository(AnalysisRepository):
                 claimed = connection.execute(query, (analysis_run_id,)).fetchone() is not None
         return claimed
 
+    def release_enqueue(self, analysis_run_id: str) -> bool:
+        """Undo the queue reservation only when no worker has claimed it."""
+        query = """
+            UPDATE analysis_runs
+            SET status = 'accepted', queued_at = NULL, phase = NULL, progress = NULL,
+                updated_at = now()
+            WHERE id = %s AND status = 'queued'
+            RETURNING id
+        """
+        with psycopg.connect(self.database_url) as connection:
+            with connection.transaction():
+                return connection.execute(query, (analysis_run_id,)).fetchone() is not None
+
     def claim(self, analysis_run_id: str, stuck_timeout_seconds: float | None = None) -> bool:
         timeout = self.stuck_timeout_seconds if stuck_timeout_seconds is None else stuck_timeout_seconds
         with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
@@ -210,7 +223,8 @@ class PostgresAnalysisRepository(AnalysisRepository):
             with psycopg.connect(self.database_url) as connection:
                 with connection.transaction():
                     connection.execute(
-                        "UPDATE analysis_runs SET phase = %s, progress = %s, updated_at = now() WHERE id = %s",
+                        """UPDATE analysis_runs SET phase = %s, progress = %s, updated_at = now()
+                           WHERE id = %s AND status = 'processing'""",
                         (value[:80], bounded_progress, analysis_run_id),
                     )
         except Exception:

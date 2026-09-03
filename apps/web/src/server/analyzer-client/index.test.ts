@@ -30,6 +30,15 @@ describe("Analyzer Client Abstraction", () => {
 			digestAlgorithm: "sha256",
 		},
 	};
+	const segmentRequest = {
+		organizationId: "org_test_001",
+		caseId: "case_test_001",
+		evidenceId: "ev_test_001",
+		objectKey:
+			"organizations/org_test_001/cases/case_test_001/artifacts/art_001.eml",
+		sha256: sampleRequest.artifact.sha256,
+		byteSize: 1024,
+	};
 
 	describe("HttpAnalyzerClient", () => {
 		const originalFetch = globalThis.fetch;
@@ -297,6 +306,41 @@ describe("Analyzer Client Abstraction", () => {
 			await expect(
 				client.dispatchIntake({ request: sampleRequest }),
 			).rejects.toBeInstanceOf(AnalyzerUnavailableError);
+		});
+
+		it.each([
+			{
+				containerFormat: "single",
+				messageCount: 2,
+				segments: [
+					{ index: 0, byteOffset: 0, byteLength: 1024, sha256: "a".repeat(64) },
+				],
+			},
+			{
+				containerFormat: "mbox",
+				messageCount: 2,
+				segments: [
+					{ index: 1, byteOffset: 0, byteLength: 512, sha256: "a".repeat(64) },
+					{
+						index: 0,
+						byteOffset: 512,
+						byteLength: 512,
+						sha256: "b".repeat(64),
+					},
+				],
+			},
+			{ containerFormat: "unknown", messageCount: 1, segments: [] },
+		])("rejects malformed segmentation responses", async (body) => {
+			globalThis.fetch = vi.fn().mockResolvedValue(
+				new Response(JSON.stringify(body), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+			const client = new HttpAnalyzerClient(dummyBaseUrl, dummyServiceToken);
+			await expect(
+				client.segmentEvidence({ request: segmentRequest }),
+			).rejects.toBeInstanceOf(AnalyzerValidationError);
 		});
 	});
 

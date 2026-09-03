@@ -6,8 +6,59 @@ import type {
 	SegmentationRequest,
 	SegmentationResult,
 } from "@mailsentinel/contracts";
+import { z } from "zod";
 import { env } from "@/env";
 import { DependencyError } from "@/server/orpc/errors";
+
+const segmentationSummarySchema = z
+	.object({
+		fromAddress: z.string().max(320).nullable(),
+		fromDisplayName: z.string().max(500).nullable(),
+		subject: z.string().max(2_000).nullable(),
+		date: z.string().max(200).nullable(),
+		messageId: z.string().max(998).nullable(),
+	})
+	.strict();
+
+const segmentationResultSchema = z
+	.object({
+		containerFormat: z.enum([
+			"mbox",
+			"bare_concatenation",
+			"multipart/digest",
+			"single",
+		]),
+		messageCount: z.number().int().min(1).max(10_000),
+		segments: z.array(
+			z
+				.object({
+					index: z.number().int().nonnegative(),
+					byteOffset: z.number().int().nonnegative(),
+					byteLength: z.number().int().positive(),
+					sha256: z.string().regex(/^[0-9a-f]{64}$/i),
+					summary: segmentationSummarySchema.optional(),
+				})
+				.strict(),
+		),
+	})
+	.strict()
+	.superRefine((value, ctx) => {
+		if (value.messageCount !== value.segments.length) {
+			ctx.addIssue({
+				code: "custom",
+				message: "messageCount does not match segments length",
+			});
+		}
+		for (let index = 0; index < value.segments.length; index++) {
+			if (value.segments[index]?.index !== index) {
+				ctx.addIssue({
+					code: "custom",
+					message: "segment indexes must be contiguous and ordered",
+				});
+				break;
+			}
+		}
+	});
 
 export interface DispatchIntakeInput {
 	request: AnalysisIntakeRequest;
@@ -213,14 +264,21 @@ export class HttpAnalyzerClient implements AnalyzerClient {
 		}
 
 		if (response.status === 200) {
+			let data: unknown;
 			try {
-				const data = (await response.json()) as SegmentationResult;
-				return data;
+				data = await response.json();
 			} catch {
 				throw new AnalyzerValidationError(
 					"Analyzer service returned malformed segmentation response",
 				);
 			}
+			const parsed = segmentationResultSchema.safeParse(data);
+			if (!parsed.success) {
+				throw new AnalyzerValidationError(
+					"Analyzer service returned invalid segmentation response",
+				);
+			}
+			return parsed.data as SegmentationResult;
 		}
 
 		if (response.status === 401) {
@@ -310,7 +368,7 @@ export class MemoryAnalyzerClient implements AnalyzerClient {
 	}
 
 	async segmentEvidence(
-		_input: SegmentEvidenceInput,
+		input: SegmentEvidenceInput,
 	): Promise<SegmentationResult> {
 		if (this.simulateDelayMs > 0) {
 			await new Promise((resolve) => setTimeout(resolve, this.simulateDelayMs));
@@ -343,8 +401,8 @@ export class MemoryAnalyzerClient implements AnalyzerClient {
 				{
 					index: 0,
 					byteOffset: 0,
-					byteLength: 0,
-					sha256: "0".repeat(64),
+					byteLength: input.request.byteSize,
+					sha256: input.request.sha256,
 				},
 			],
 		};

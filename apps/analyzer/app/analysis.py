@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import re
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from threading import Thread
+from typing import Any
 
 from app.contracts.models import (
     MAX_ENRICHMENT,
@@ -226,32 +229,87 @@ def _set_phase(repository: AnalysisRepository, run_id: str, phase: str, progress
             pass
 
 
-def _run_with_watchdog(callback: Callable[[], AnalysisResult], timeout_seconds: float) -> AnalysisResult:
-    """Run a pipeline in a daemon thread and return promptly on a hung dependency.
-
-    Python cannot safely kill a running thread.  The daemon boundary ensures a
-    stuck storage/provider operation cannot keep process shutdown hostage; the
-    repository is marked retryable by the caller when the watchdog fires.
-    """
-    result: list[AnalysisResult] = []
+def _read_with_watchdog(callback: Callable[[], bytes], timeout_seconds: float) -> bytes:
+    """Bound a dependency read; a late read cannot mutate repository state."""
+    result: list[bytes] = []
     error: list[BaseException] = []
 
     def target() -> None:
         try:
             result.append(callback())
-        except BaseException as exception:  # noqa: BLE001 - transport all worker errors to caller
+        except BaseException as exception:  # noqa: BLE001
             error.append(exception)
 
-    worker = Thread(target=target, name="mailsentinel-analysis", daemon=True)
+    worker = Thread(target=target, name="mailsentinel-evidence-read", daemon=True)
     worker.start()
     worker.join(timeout=max(0.001, timeout_seconds))
     if worker.is_alive():
-        raise TimeoutError("analysis execution exceeded configured watchdog")
+        raise TimeoutError("evidence read exceeded configured watchdog")
     if error:
         raise error[0]
     if not result:
-        raise RuntimeError("analysis pipeline returned no result")
+        raise RuntimeError("evidence read returned no result")
     return result[0]
+
+
+def _analysis_process_target(connection: Any, arguments: dict[str, Any]) -> None:
+    try:
+        result = analyze_bytes(
+            **arguments,
+            phase_callback=lambda name, progress: connection.send(("phase", name, progress)),
+        )
+        connection.send(("ok", result.model_dump(mode="json")))
+    except AnalysisError as error:
+        connection.send(("analysis_error", error.code, error.message, error.retryable))
+    except BaseException:  # noqa: BLE001 - do not expose child exception details
+        connection.send(("error",))
+    finally:
+        connection.close()
+
+
+def _analyze_in_process(
+    *,
+    arguments: dict[str, Any],
+    timeout_seconds: float,
+    phase_callback: Callable[[str, int | None], None],
+) -> AnalysisResult:
+    context: Any = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    worker = context.Process(
+        target=_analysis_process_target,
+        args=(sender, arguments),
+        name="mailsentinel-analysis",
+        daemon=True,
+    )
+    worker.start()
+    sender.close()
+    deadline = time.monotonic() + max(0.001, timeout_seconds)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("analysis execution exceeded configured watchdog")
+            if receiver.poll(min(0.1, remaining)):
+                message = receiver.recv()
+                if message[0] == "phase":
+                    phase_callback(message[1], message[2])
+                    continue
+                if message[0] == "ok":
+                    worker.join(1.0)
+                    return AnalysisResult.model_validate(message[1])
+                if message[0] == "analysis_error":
+                    raise AnalysisError(message[1], message[2], retryable=message[3])
+                raise RuntimeError("analysis process failed")
+            if not worker.is_alive():
+                raise RuntimeError("analysis process exited without a result")
+    finally:
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(2.0)
+            if worker.is_alive() and hasattr(worker, "kill"):
+                worker.kill()
+                worker.join(1.0)
+        receiver.close()
 
 
 def run_analysis(
@@ -311,31 +369,36 @@ def run_analysis(
             )
         return None
 
-    def execute() -> AnalysisResult:
+    timeout_seconds = getattr(settings, "execution_timeout_seconds", 120.0)
+    deadline = time.monotonic() + timeout_seconds
+    try:
         phase("fetching_evidence", 10)
-        raw = evidence_store.read_verified(
-            run.object_key,
-            expected_sha256=run.sha256,
-            expected_size=run.byte_size,
-            max_bytes=settings.max_eml_bytes,
-            expected_scope=(run.organization_id, run.case_id),
+        raw = _read_with_watchdog(
+            lambda: evidence_store.read_verified(
+                run.object_key,
+                expected_sha256=run.sha256,
+                expected_size=run.byte_size,
+                max_bytes=settings.max_eml_bytes,
+                expected_scope=(run.organization_id, run.case_id),
+            ),
+            max(0.001, deadline - time.monotonic()),
         )
-        result = analyze_bytes(
-            run_id=run.analysis_run_id,
-            organization_id=run.organization_id,
-            case_id=run.case_id,
-            artifact_sha256=run.sha256,
-            artifact_byte_size=run.byte_size,
-            raw=raw,
-            settings=settings,
+        result = _analyze_in_process(
+            arguments={
+                "run_id": run.analysis_run_id,
+                "organization_id": run.organization_id,
+                "case_id": run.case_id,
+                "artifact_sha256": run.sha256,
+                "artifact_byte_size": run.byte_size,
+                "raw": raw,
+                "settings": settings,
+            },
+            timeout_seconds=max(0.001, deadline - time.monotonic()),
             phase_callback=phase,
         )
         repository.save_completed(result)
         phase("completed", 100)
         return result
-
-    try:
-        return _run_with_watchdog(execute, getattr(settings, "execution_timeout_seconds", 120.0))
     except TimeoutError as error:
         repository.save_failed(
             run_id,

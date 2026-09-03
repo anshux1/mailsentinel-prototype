@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { SegmentationResult } from "@mailsentinel/contracts";
 import {
 	type AuditRepository,
@@ -17,7 +17,11 @@ import {
 } from "@mailsentinel/db";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
-import { defaultAnalyzerClient } from "@/server/analyzer-client";
+import {
+	AnalyzerTimeoutError,
+	AnalyzerUnavailableError,
+	defaultAnalyzerClient,
+} from "@/server/analyzer-client";
 import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
@@ -25,6 +29,7 @@ import {
 	defaultEvidenceStorage,
 	type EvidenceStorage,
 	evidenceObjectKey,
+	MAX_CONTAINER_BYTES,
 	MAX_EML_BYTES,
 } from "@/server/storage/s3";
 import {
@@ -37,8 +42,10 @@ import { investigatorProcedure, viewerProcedure } from "./middleware";
 
 export const evidenceSummarySchema = z.object({
 	from: z.string().nullable().optional(),
+	fromDisplayName: z.string().nullable().optional(),
 	subject: z.string().nullable().optional(),
-	date: z.union([z.date(), z.string()]).nullable().optional(),
+	date: z.string().nullable().optional(),
+	messageId: z.string().nullable().optional(),
 });
 
 export type EvidenceSummary = z.infer<typeof evidenceSummarySchema>;
@@ -223,8 +230,8 @@ export const createUploadInput = z.object({
 		.int("Byte size must be an integer")
 		.min(1, "Evidence payload cannot be empty")
 		.max(
-			MAX_EML_BYTES,
-			`Evidence exceeds maximum allowed size (${MAX_EML_BYTES} bytes)`,
+			MAX_CONTAINER_BYTES,
+			`Evidence exceeds maximum allowed container size (${MAX_CONTAINER_BYTES} bytes)`,
 		),
 	sha256: z
 		.string()
@@ -377,7 +384,23 @@ export const evidenceRouter = {
 				throw new NotFoundError("Case not found");
 			}
 
-			const maxDecodedBytes = MAX_EML_BYTES;
+			const evidenceRepo =
+				context.repos?.evidence ?? new DrizzleEvidenceRepository(db);
+			const existing = await evidenceRepo.getEvidence({
+				organizationId: context.organizationId,
+				caseId: input.caseId,
+				evidenceId: input.evidenceId,
+			});
+			if (!existing) {
+				throw new NotFoundError("Evidence not found");
+			}
+
+			// Ordinary messages retain the tighter limit. A caller can only use the
+			// container allowance after registering matching larger metadata.
+			const maxDecodedBytes = Math.min(
+				MAX_CONTAINER_BYTES,
+				Math.max(MAX_EML_BYTES, existing.byteSize),
+			);
 			const maxBase64Chars = Math.ceil(maxDecodedBytes / 3) * 4 + 16;
 			const maxRawStringLength = Math.ceil(maxBase64Chars * 1.05) + 64;
 
@@ -431,17 +454,6 @@ export const evidenceRouter = {
 				);
 			}
 
-			const evidenceRepo =
-				context.repos?.evidence ?? new DrizzleEvidenceRepository(db);
-			const existing = await evidenceRepo.getEvidence({
-				organizationId: context.organizationId,
-				caseId: input.caseId,
-				evidenceId: input.evidenceId,
-			});
-			if (!existing) {
-				throw new NotFoundError("Evidence not found");
-			}
-
 			let verifiedRecord: EvidenceShell;
 
 			if (existing.status === "verified") {
@@ -483,6 +495,7 @@ export const evidenceRouter = {
 						caseId: input.caseId,
 						body: buffer,
 						sha256: actualSha256,
+						maxBytes: MAX_CONTAINER_BYTES,
 					});
 				} catch (storageErr) {
 					let storedObjectMatches = false;
@@ -688,9 +701,15 @@ export const evidenceRouter = {
 					},
 					requestId: context.requestId,
 				});
-			} catch {
-				// Safe degradation: Analyzer unavailable during segmentation degrades safely:
-				// the container is kept as ordinary single evidence with a recorded reason, never lost.
+			} catch (error) {
+				if (
+					!(error instanceof AnalyzerUnavailableError) &&
+					!(error instanceof AnalyzerTimeoutError)
+				) {
+					throw error;
+				}
+				// Dependency unavailability may degrade to a single evidence item; an
+				// invalid analyzer response must never be accepted as ordinary evidence.
 				logger.warn(
 					"Analyzer segmentation unavailable or failed; proceeding with single evidence",
 					{
@@ -703,6 +722,49 @@ export const evidenceRouter = {
 			}
 
 			const segments = segmentation?.segments ?? [];
+			if (segmentation) {
+				let previousEnd = 0;
+				for (const [position, segment] of segments.entries()) {
+					const end = segment.byteOffset + segment.byteLength;
+					if (
+						segment.index !== position ||
+						!Number.isSafeInteger(end) ||
+						segment.byteOffset < previousEnd ||
+						end > buffer.byteLength ||
+						segment.byteLength > MAX_EML_BYTES
+					) {
+						throw new DependencyError(
+							"Analyzer returned unsafe segmentation boundaries",
+							"analyzer",
+						);
+					}
+					const actual = createHash("sha256")
+						.update(buffer.subarray(segment.byteOffset, end))
+						.digest();
+					const expected = Buffer.from(segment.sha256, "hex");
+					if (
+						expected.byteLength !== actual.byteLength ||
+						!timingSafeEqual(actual, expected)
+					) {
+						throw new DependencyError(
+							"Analyzer returned a mismatched segment digest",
+							"analyzer",
+						);
+					}
+					previousEnd = end;
+				}
+				if (
+					segmentation.messageCount !== segments.length ||
+					(segmentation.containerFormat === "single" &&
+						segments.length !== 1) ||
+					(segmentation.containerFormat !== "single" && segments.length < 2)
+				) {
+					throw new DependencyError(
+						"Analyzer returned inconsistent segmentation metadata",
+						"analyzer",
+					);
+				}
+			}
 
 			if (
 				!segmentation ||
@@ -748,22 +810,34 @@ export const evidenceRouter = {
 				}
 			} else {
 				// Multi-message container ingestion path:
-				const batch =
-					existingBatch ??
-					(await batchRepo.createBatch({
-						organizationId: context.organizationId,
-						caseId: input.caseId,
-						source: "upload_container",
-						status: "segmenting",
-						containerEvidenceId: verifiedRecord.id,
-						messageCount: segments.length,
-						readyCount: 0,
-						failedCount: 0,
-						metadata: {
-							containerFormat: segmentation.containerFormat,
-							segmentCount: segments.length,
-						},
-					}));
+				let batch = existingBatch;
+				if (!batch) {
+					try {
+						batch = await batchRepo.createBatch({
+							organizationId: context.organizationId,
+							caseId: input.caseId,
+							source: "upload_container",
+							status: "segmenting",
+							containerEvidenceId: verifiedRecord.id,
+							messageCount: segments.length,
+							readyCount: 0,
+							failedCount: 0,
+							metadata: {
+								containerFormat: segmentation.containerFormat,
+								segmentCount: segments.length,
+							},
+						});
+					} catch (error) {
+						if (!(error instanceof DbConflictError)) throw error;
+						batch = (
+							await batchRepo.listBatchesByCase({
+								organizationId: context.organizationId,
+								caseId: input.caseId,
+							})
+						).find((item) => item.containerEvidenceId === verifiedRecord.id);
+						if (!batch) throw error;
+					}
+				}
 
 				if (!existingBatch) {
 					await recordAuditEvent(auditRepo, {
@@ -781,11 +855,19 @@ export const evidenceRouter = {
 					});
 				}
 
-				const writtenChildKeys: string[] = [];
+				const existingChildren = await evidenceRepo.listEvidenceByBatch({
+					organizationId: context.organizationId,
+					batchId: batch.id,
+				});
+				const existingBySequence = new Map(
+					existingChildren.map((child) => [child.sequence, child]),
+				);
+				const writtenChildKeys = new Set<string>();
 				try {
 					const childRecords: {
 						sequence: number;
 						sourceMessageId: string | null;
+						summary: EvidenceSummary | null;
 						objectKey: string;
 						sha256: string;
 						byteSize: number;
@@ -800,6 +882,27 @@ export const evidenceRouter = {
 							.update(childBuffer)
 							.digest("hex")
 							.toLowerCase();
+						const existingChild = existingBySequence.get(segment.index);
+						if (existingChild) {
+							if (
+								existingChild.sha256 !== childSha256 ||
+								existingChild.byteSize !== childBuffer.byteLength ||
+								existingChild.status !== "verified"
+							) {
+								throw new ConflictError(
+									"Existing container child conflicts with analyzer output",
+								);
+							}
+							childRecords.push({
+								sequence: segment.index,
+								sourceMessageId: existingChild.sourceMessageId,
+								summary: existingChild.summary ?? null,
+								objectKey: existingChild.objectKey,
+								sha256: existingChild.sha256,
+								byteSize: existingChild.byteSize,
+							});
+							continue;
+						}
 						const artifactId = `${verifiedRecord.id.replace(/[^A-Za-z0-9_-]/g, "_")}_child_${segment.index}`;
 						const childObjectKey = evidenceObjectKey({
 							organizationId: context.organizationId,
@@ -814,70 +917,65 @@ export const evidenceRouter = {
 							body: childBuffer,
 							sha256: childSha256,
 						});
-						writtenChildKeys.push(childObjectKey);
+						writtenChildKeys.add(childObjectKey);
 
 						childRecords.push({
 							sequence: segment.index,
 							sourceMessageId: segment.summary?.messageId ?? null,
+							summary: segment.summary
+								? {
+										from: segment.summary.fromAddress,
+										fromDisplayName: segment.summary.fromDisplayName,
+										subject: segment.summary.subject,
+										date: segment.summary.date,
+										messageId: segment.summary.messageId,
+									}
+								: null,
 							objectKey: childObjectKey,
 							sha256: childSha256,
 							byteSize: childBuffer.byteLength,
 						});
 					}
 
-					// Idempotent child creation: check existing children to avoid duplicates
-					const existingChildren = await evidenceRepo.listEvidenceByBatch({
+					const finalized = await batchRepo.finalizeChildren({
 						organizationId: context.organizationId,
+						caseId: input.caseId,
 						batchId: batch.id,
-					});
-					const existingSeqs = new Set(existingChildren.map((c) => c.sequence));
-
-					for (const child of childRecords) {
-						if (!existingSeqs.has(child.sequence)) {
-							const createdChild = await evidenceRepo.createVerified({
-								organizationId: context.organizationId,
-								caseId: input.caseId,
-								batchId: batch.id,
-								sequence: child.sequence,
-								sourceMessageId: child.sourceMessageId,
-								objectKey: child.objectKey,
-								sha256: child.sha256,
-								byteSize: child.byteSize,
-								contentType: "message/rfc822",
-							});
-
-							await recordAuditEvent(auditRepo, {
-								organizationId: context.organizationId,
-								actorUserId: context.userId,
-								action: "evidence.child_registered",
-								resourceType: "evidence",
-								resourceId: createdChild.id,
-								requestId: context.requestId,
-								metadata: {
-									caseId: input.caseId,
-									batchId: batch.id,
-									sequence: child.sequence,
-									sourceMessageId: child.sourceMessageId,
-								},
-							});
-						}
-					}
-
-					await batchRepo.transitionStatus({
-						organizationId: context.organizationId,
-						batchId: batch.id,
-						status: "ready",
+						children: childRecords.map((child) => ({
+							organizationId: context.organizationId,
+							caseId: input.caseId,
+							batchId: batch.id,
+							sequence: child.sequence,
+							sourceMessageId: child.sourceMessageId,
+							summary: child.summary,
+							objectKey: child.objectKey,
+							sha256: child.sha256,
+							byteSize: child.byteSize,
+							contentType: "message/rfc822",
+						})),
 						metadata: {
 							containerFormat: segmentation.containerFormat,
 							childCount: childRecords.length,
 						},
 					});
-					await batchRepo.incrementCounts({
-						organizationId: context.organizationId,
-						batchId: batch.id,
-						readyIncrement: childRecords.length,
-					});
-
+					const finalChildren = finalized.children;
+					writtenChildKeys.clear();
+					for (const createdChild of finalized.createdChildren) {
+						await recordAuditEvent(auditRepo, {
+							organizationId: context.organizationId,
+							actorUserId: context.userId,
+							action: "evidence.child_registered",
+							resourceType: "evidence",
+							resourceId: createdChild.id,
+							requestId: context.requestId,
+							metadata: {
+								caseId: input.caseId,
+								batchId: batch.id,
+								sequence: createdChild.sequence,
+								sourceMessageId: createdChild.sourceMessageId,
+							},
+						});
+					}
 					await recordAuditEvent(auditRepo, {
 						organizationId: context.organizationId,
 						actorUserId: context.userId,
@@ -889,7 +987,7 @@ export const evidenceRouter = {
 							caseId: input.caseId,
 							batchId: batch.id,
 							containerFormat: segmentation.containerFormat,
-							childCount: childRecords.length,
+							childCount: finalChildren.length,
 						},
 					});
 
@@ -902,12 +1000,12 @@ export const evidenceRouter = {
 						requestId: context.requestId,
 						metadata: {
 							caseId: input.caseId,
-							messageCount: childRecords.length,
-							readyCount: childRecords.length,
+							messageCount: segments.length,
+							readyCount: finalChildren.length,
 						},
 					});
 				} catch (childErr) {
-					// Storage or registration failure: cleanup written child objects and mark batch failed
+					// Delete only objects that have no committed evidence row.
 					for (const key of writtenChildKeys) {
 						await attemptStorageCleanup({
 							storage,
@@ -921,10 +1019,22 @@ export const evidenceRouter = {
 					}
 
 					try {
+						const durableChildren = await evidenceRepo.listEvidenceByBatch({
+							organizationId: context.organizationId,
+							batchId: batch.id,
+						});
+						const durableReady = durableChildren.length;
+						await batchRepo.setCounts({
+							organizationId: context.organizationId,
+							batchId: batch.id,
+							messageCount: segments.length,
+							readyCount: durableReady,
+							failedCount: segments.length - durableReady,
+						});
 						await batchRepo.transitionStatus({
 							organizationId: context.organizationId,
 							batchId: batch.id,
-							status: "failed",
+							status: durableReady > 0 ? "partial" : "failed",
 							failureReason: "Container segmentation processing failed",
 						});
 					} catch {
@@ -987,10 +1097,15 @@ export const evidenceRouter = {
 	listByBatch: viewerProcedure
 		.input(
 			z.object({
-				batchId: z.string().min(1),
-				caseId: z.string().optional(),
+				batchId: identifierSchema,
+				caseId: identifierSchema.optional(),
 				limit: z.number().int().min(1).max(100).default(50).optional(),
-				cursor: z.string().nullable().optional(),
+				cursor: z
+					.string()
+					.max(1024)
+					.refine((value) => decodeCursor(value) !== null, "Invalid cursor")
+					.nullable()
+					.optional(),
 			}),
 		)
 		.output(listEvidenceOutputSchema)

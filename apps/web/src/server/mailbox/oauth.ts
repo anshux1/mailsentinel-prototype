@@ -1,12 +1,7 @@
 import "server-only";
 
-import {
-	createHash,
-	createHmac,
-	randomBytes,
-	timingSafeEqual,
-} from "node:crypto";
-import { getEncryptionKey } from "./crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { decryptToken, encryptToken } from "./crypto";
 
 export interface OAuthStatePayload {
 	organizationId: string;
@@ -43,11 +38,8 @@ export function createSignedOAuthState(
 		nonce: randomBytes(16).toString("hex"),
 	};
 
-	const json = JSON.stringify(fullPayload);
-	const data = Buffer.from(json, "utf8").toString("base64url");
-	const key = getEncryptionKey(secretKey);
-	const sig = createHmac("sha256", key).update(data).digest("base64url");
-	return `${data}.${sig}`;
+	const encrypted = encryptToken(JSON.stringify(fullPayload), secretKey);
+	return `v1.${encrypted.tokenNonce}.${encrypted.encryptedRefreshToken}`;
 }
 
 export function verifySignedOAuthState(
@@ -60,44 +52,31 @@ export function verifySignedOAuthState(
 	}
 
 	const parts = state.split(".");
-	if (parts.length !== 2) {
-		throw new OAuthStateError(
-			"Malformed state format: expected payload.signature",
-		);
-	}
-
-	const [data, sig] = parts;
-	if (!data || !sig) {
-		throw new OAuthStateError(
-			"Malformed state format: empty payload or signature",
-		);
-	}
-
-	const key = getEncryptionKey(secretKey);
-	const expectedSig = createHmac("sha256", key)
-		.update(data)
-		.digest("base64url");
-
-	const sigBuf = Buffer.from(sig);
-	const expBuf = Buffer.from(expectedSig);
-
-	if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
-		throw new OAuthStateError("Invalid state signature: tampering detected");
+	if (parts.length !== 3 || parts[0] !== "v1" || !parts[1] || !parts[2]) {
+		throw new OAuthStateError("Malformed encrypted state format");
 	}
 
 	let payload: OAuthStatePayload;
 	try {
-		const json = Buffer.from(data, "base64url").toString("utf8");
+		const json = decryptToken(
+			{ encryptedRefreshToken: parts[2], tokenNonce: parts[1] },
+			secretKey,
+		);
 		payload = JSON.parse(json) as OAuthStatePayload;
 	} catch (err) {
-		throw new OAuthStateError("Malformed state JSON content", { cause: err });
+		throw new OAuthStateError("Invalid encrypted state", { cause: err });
 	}
 
 	if (
 		!payload.organizationId ||
 		!payload.userId ||
 		!payload.codeVerifier ||
-		!payload.timestamp
+		!payload.timestamp ||
+		!payload.nonce ||
+		!/^[A-Za-z0-9_-]{1,200}$/.test(payload.organizationId) ||
+		!/^[A-Za-z0-9_-]{1,200}$/.test(payload.userId) ||
+		!/^[A-Za-z0-9_-]{43,128}$/.test(payload.codeVerifier) ||
+		!/^[a-f0-9]{32}$/.test(payload.nonce)
 	) {
 		throw new OAuthStateError("State payload is missing required fields");
 	}

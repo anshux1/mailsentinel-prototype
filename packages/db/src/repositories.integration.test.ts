@@ -724,12 +724,12 @@ describe("PostgreSQL repository integration tests", () => {
 				caseId: caseA,
 				source: "upload_container",
 				status: "segmenting",
-				messageCount: 10,
+				messageCount: 15,
 			});
 
 			expect(batch.id).toBeDefined();
 			expect(batch.status).toBe("segmenting");
-			expect(batch.messageCount).toBe(10);
+			expect(batch.messageCount).toBe(15);
 			expect(batch.readyCount).toBe(0);
 
 			// Cross-tenant get

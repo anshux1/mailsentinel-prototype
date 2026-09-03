@@ -1,7 +1,9 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import {
 	DrizzleAuditRepository,
 	DrizzleMailboxConnectionRepository,
 	memberships,
+	verification,
 } from "@mailsentinel/db";
 import { and, eq } from "drizzle-orm";
 import { env } from "@/env";
@@ -22,26 +24,66 @@ export async function GET(request: Request): Promise<Response> {
 	}
 
 	const url = new URL(request.url);
+	const consumeStateAndRedirect = (target: URL): Response =>
+		new Response(null, {
+			status: 302,
+			headers: {
+				Location: target.toString(),
+				"Set-Cookie":
+					"mailbox_oauth_state=; Path=/api/mailbox/gmail/callback; HttpOnly; SameSite=Lax; Max-Age=0",
+			},
+		});
 	const error = url.searchParams.get("error");
 	const code = url.searchParams.get("code");
 	const state = url.searchParams.get("state");
 
 	if (error) {
-		logger.warn("mailbox.oauth_callback_error", { error });
-		return Response.redirect(
-			new URL(`/settings?error=${encodeURIComponent(error)}`, request.url),
-			302,
+		logger.warn("mailbox.oauth_callback_denied");
+		return consumeStateAndRedirect(
+			new URL("/settings?error=oauth_denied", request.url),
 		);
 	}
 
 	if (!code || !state) {
-		return Response.redirect(
+		return consumeStateAndRedirect(
 			new URL("/settings?error=missing_code_or_state", request.url),
-			302,
 		);
 	}
 
-	// 1. Verify signed organization-scoped state and extract PKCE code_verifier
+	const cookieBinding = request.headers
+		.get("cookie")
+		?.split(";")
+		.map((part) => part.trim().split("="))
+		.find(([name]) => name === "mailbox_oauth_state")?.[1];
+	const expectedBinding = createHash("sha256")
+		.update(state)
+		.digest("base64url");
+	const supplied = Buffer.from(cookieBinding ?? "", "utf8");
+	const expected = Buffer.from(expectedBinding, "utf8");
+	if (
+		supplied.byteLength !== expected.byteLength ||
+		!timingSafeEqual(supplied, expected)
+	) {
+		return consumeStateAndRedirect(
+			new URL("/settings?error=invalid_state", request.url),
+		);
+	}
+	const consumed = await db
+		.delete(verification)
+		.where(
+			and(
+				eq(verification.identifier, `mailbox-oauth:${expectedBinding}`),
+				eq(verification.value, expectedBinding),
+			),
+		)
+		.returning({ expiresAt: verification.expiresAt });
+	if (!consumed[0] || consumed[0].expiresAt.getTime() < Date.now()) {
+		return consumeStateAndRedirect(
+			new URL("/settings?error=invalid_state", request.url),
+		);
+	}
+
+	// 1. Decrypt organization-scoped state and extract PKCE code_verifier.
 	let statePayload: ReturnType<typeof verifySignedOAuthState>;
 	try {
 		statePayload = verifySignedOAuthState(state);
@@ -49,18 +91,16 @@ export async function GET(request: Request): Promise<Response> {
 		logger.warn("mailbox.oauth_state_invalid", {
 			reason: err instanceof Error ? err.message : "unknown",
 		});
-		return Response.redirect(
+		return consumeStateAndRedirect(
 			new URL("/settings?error=invalid_state", request.url),
-			302,
 		);
 	}
 
 	// 2. Verify current user session matches state payload
 	const session = await auth.api.getSession({ headers: request.headers });
 	if (!session?.user || session.user.id !== statePayload.userId) {
-		return Response.redirect(
+		return consumeStateAndRedirect(
 			new URL("/settings?error=unauthorized_session", request.url),
-			302,
 		);
 	}
 
@@ -73,9 +113,8 @@ export async function GET(request: Request): Promise<Response> {
 	});
 
 	if (!member || member.role !== "owner") {
-		return Response.redirect(
+		return consumeStateAndRedirect(
 			new URL("/settings?error=owner_role_required", request.url),
-			302,
 		);
 	}
 
@@ -97,9 +136,21 @@ export async function GET(request: Request): Promise<Response> {
 		logger.warn("mailbox.token_exchange_failed", {
 			organizationId: statePayload.organizationId,
 		});
-		return Response.redirect(
+		return consumeStateAndRedirect(
 			new URL("/settings?error=token_exchange_failed", request.url),
-			302,
+		);
+	}
+
+	const grantedScopes = new Set(
+		(tokenResponse.scope ?? "").split(/\s+/).filter(Boolean),
+	);
+	const requiredScope = "https://www.googleapis.com/auth/gmail.readonly";
+	if (grantedScopes.size !== 1 || !grantedScopes.has(requiredScope)) {
+		logger.warn("mailbox.oauth_scope_rejected", {
+			organizationId: statePayload.organizationId,
+		});
+		return consumeStateAndRedirect(
+			new URL("/settings?error=invalid_scope", request.url),
 		);
 	}
 
@@ -107,9 +158,8 @@ export async function GET(request: Request): Promise<Response> {
 		logger.warn("mailbox.missing_refresh_token", {
 			organizationId: statePayload.organizationId,
 		});
-		return Response.redirect(
+		return consumeStateAndRedirect(
 			new URL("/settings?error=missing_refresh_token", request.url),
-			302,
 		);
 	}
 
@@ -123,9 +173,8 @@ export async function GET(request: Request): Promise<Response> {
 			accessToken: tokenResponse.accessToken,
 		});
 	} catch {
-		return Response.redirect(
+		return consumeStateAndRedirect(
 			new URL("/settings?error=profile_fetch_failed", request.url),
-			302,
 		);
 	}
 
@@ -160,8 +209,7 @@ export async function GET(request: Request): Promise<Response> {
 		},
 	});
 
-	return Response.redirect(
+	return consumeStateAndRedirect(
 		new URL("/settings?mailbox_connected=true", request.url),
-		302,
 	);
 }

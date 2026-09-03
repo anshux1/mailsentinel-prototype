@@ -62,6 +62,8 @@ class AnalysisRepository(Protocol):
 
     def enqueue_once(self, analysis_run_id: str) -> bool: ...
 
+    def release_enqueue(self, analysis_run_id: str) -> bool: ...
+
     def update_phase(self, analysis_run_id: str, phase: AnalysisPhase | str, progress: int | None = None) -> None: ...
 
     def get_detailed_status(self, analysis_run_id: str) -> AnalysisStatus | None: ...
@@ -176,7 +178,7 @@ class InMemoryAnalysisRepository:
 
     def update_phase(self, analysis_run_id: str, phase: AnalysisPhase | str, progress: int | None = None) -> None:
         with self._lock:
-            if analysis_run_id not in self.states:
+            if self.states.get(analysis_run_id) != AnalysisStatusValue.PROCESSING:
                 return
             phase_value = phase.value if isinstance(phase, AnalysisPhase) else str(phase)
             self.phases[analysis_run_id] = phase_value[:80]
@@ -226,6 +228,19 @@ class InMemoryAnalysisRepository:
             if state == AnalysisStatusValue.FAILED and not self.retryable.get(analysis_run_id, False):
                 return False
             self.mark_queued(analysis_run_id)
+            return True
+
+    def release_enqueue(self, analysis_run_id: str) -> bool:
+        """Return an unpublished queued run to accepted without touching active work."""
+        with self._lock:
+            if self.states.get(analysis_run_id) != AnalysisStatusValue.QUEUED:
+                return False
+            now = datetime.now(UTC)
+            self.states[analysis_run_id] = AnalysisStatusValue.ACCEPTED
+            self.queued_at.pop(analysis_run_id, None)
+            self.updated_at[analysis_run_id] = now
+            self.phases.pop(analysis_run_id, None)
+            self.progress.pop(analysis_run_id, None)
             return True
 
     def claim(self, analysis_run_id: str, stuck_timeout_seconds: float | None = None) -> bool:

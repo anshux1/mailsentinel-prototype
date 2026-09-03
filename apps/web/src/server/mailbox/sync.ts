@@ -18,7 +18,11 @@ import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { ConflictError, NotFoundError } from "@/server/orpc/errors";
-import { defaultEvidenceStorage, evidenceObjectKey } from "@/server/storage/s3";
+import {
+	defaultEvidenceStorage,
+	evidenceObjectKey,
+	MAX_EML_BYTES,
+} from "@/server/storage/s3";
 import { defaultGmailClient } from "./client";
 import { decryptToken } from "./crypto";
 import {
@@ -29,6 +33,86 @@ import {
 	type MailboxSyncOptions,
 	type MailboxSyncResult,
 } from "./types";
+
+const MAX_PROVIDER_ATTEMPTS = 3;
+
+async function withProviderRetry<T>(operation: () => Promise<T>): Promise<T> {
+	let lastError: unknown;
+	for (let attempt = 0; attempt < MAX_PROVIDER_ATTEMPTS; attempt++) {
+		try {
+			return await operation();
+		} catch (error) {
+			lastError = error;
+			if (
+				!(error instanceof GmailRateLimitError) ||
+				attempt === MAX_PROVIDER_ATTEMPTS - 1
+			) {
+				throw error;
+			}
+			const exponential = 100 * 2 ** attempt;
+			const delay = Math.min(10_000, Math.max(exponential, error.retryAfterMs));
+			await new Promise((resolve) => setTimeout(resolve, delay));
+		}
+	}
+	throw lastError;
+}
+
+function decodeGmailRaw(value: string): Buffer {
+	if (
+		value.length === 0 ||
+		value.length > Math.ceil(MAX_EML_BYTES / 3) * 4 + 4 ||
+		!/^[A-Za-z0-9_-]+={0,2}$/.test(value) ||
+		value.length % 4 === 1
+	) {
+		throw new Error("invalid Gmail raw message encoding");
+	}
+	const decoded = Buffer.from(value, "base64url");
+	if (decoded.byteLength === 0 || decoded.byteLength > MAX_EML_BYTES) {
+		throw new Error("Gmail raw message exceeds the configured size limit");
+	}
+	const canonicalInput = value.replace(/=+$/, "");
+	if (decoded.toString("base64url") !== canonicalInput) {
+		throw new Error("non-canonical Gmail raw message encoding");
+	}
+	return decoded;
+}
+
+function extractSafeSummary(buffer: Buffer): {
+	from?: string | null;
+	fromDisplayName?: string | null;
+	subject?: string | null;
+	date?: string | null;
+	messageId?: string | null;
+} {
+	const headerEnd = buffer.indexOf("\r\n\r\n");
+	const fallbackEnd = buffer.indexOf("\n\n");
+	const end =
+		headerEnd >= 0
+			? headerEnd
+			: fallbackEnd >= 0
+				? fallbackEnd
+				: Math.min(buffer.byteLength, 65_536);
+	const headerText = buffer
+		.subarray(0, Math.min(end, 65_536))
+		.toString("utf8")
+		.replace(/\r?\n[ \t]+/g, " ");
+	const values = new Map<string, string>();
+	for (const line of headerText.split(/\r?\n/)) {
+		const separator = line.indexOf(":");
+		if (separator <= 0) continue;
+		const name = line.slice(0, separator).trim().toLowerCase();
+		if (!values.has(name)) values.set(name, line.slice(separator + 1).trim());
+	}
+	const from = values.get("from")?.slice(0, 500) ?? null;
+	const displayMatch = from?.match(/^\s*"?([^"<]+?)"?\s*</);
+	return {
+		from,
+		fromDisplayName: displayMatch?.[1]?.trim().slice(0, 500) ?? null,
+		subject: values.get("subject")?.slice(0, 2_000) ?? null,
+		date: values.get("date")?.slice(0, 200) ?? null,
+		messageId: values.get("message-id")?.slice(0, 998) ?? null,
+	};
+}
 
 export async function runMailboxSync(
 	options: MailboxSyncOptions,
@@ -43,37 +127,30 @@ export async function runMailboxSync(
 			options.repos?.mailbox ?? new DrizzleMailboxConnectionRepository(db),
 		audit: options.repos?.audit ?? new DrizzleAuditRepository(db),
 	};
-
 	const storage = options.storage ?? defaultEvidenceStorage;
 	const analyzer = options.analyzerClient ?? defaultAnalyzerClient;
 	const gmailClient: GmailClient = options.gmailClient ?? defaultGmailClient;
 
-	// 1. Verify connection ownership and status
 	const connection = await repos.mailbox.getConnection({
 		organizationId: options.organizationId,
 		connectionId: options.connectionId,
 	});
-
-	if (!connection) {
-		throw new NotFoundError("Mailbox connection not found");
-	}
-
-	if (connection.status === "disconnected") {
+	if (!connection) throw new NotFoundError("Mailbox connection not found");
+	if (connection.status === "disconnected")
 		throw new ConflictError("Mailbox connection is disconnected");
-	}
 
-	// 2. Verify target case exists and belongs to the active organization
 	const caseRecord = await repos.cases.getCase({
 		organizationId: options.organizationId,
 		caseId: options.caseId,
 	});
+	if (!caseRecord) throw new NotFoundError("Case not found");
 
-	if (!caseRecord) {
-		throw new NotFoundError("Case not found");
-	}
+	// Database compare-and-set prevents concurrent syncs across application instances.
+	await repos.mailbox.beginSync({
+		organizationId: options.organizationId,
+		connectionId: connection.id,
+	});
 
-	// 3. Decrypt refresh token in the sync worker only.
-	// Never log, audit, or return decrypted or encrypted tokens.
 	let refreshToken: string;
 	try {
 		refreshToken = decryptToken(
@@ -95,11 +172,10 @@ export async function runMailboxSync(
 		);
 	}
 
-	// 4. Enforce bounds strictly server-side
-	const rawMax = options.maxMessages ?? env.MAILBOX_SYNC_MAX_MESSAGES ?? 200;
-	const effectiveMaxMessages = Math.min(Math.max(1, rawMax), 1000);
-
-	// 5. Create ingestion batch for this mailbox sync run
+	const effectiveMaxMessages = Math.min(
+		Math.max(1, options.maxMessages ?? env.MAILBOX_SYNC_MAX_MESSAGES ?? 200),
+		1000,
+	);
 	const batch = await repos.batches.createBatch({
 		organizationId: options.organizationId,
 		caseId: options.caseId,
@@ -109,8 +185,6 @@ export async function runMailboxSync(
 		readyCount: 0,
 		failedCount: 0,
 		metadata: {
-			connectionId: connection.id,
-			accountEmail: connection.accountEmail,
 			provider: connection.provider,
 			label: options.label ?? null,
 		},
@@ -123,46 +197,29 @@ export async function runMailboxSync(
 		resourceType: "mailbox_connection",
 		resourceId: connection.id,
 		requestId: options.requestId,
-		metadata: {
-			caseId: options.caseId,
-			batchId: batch.id,
-			accountEmail: connection.accountEmail,
-		},
+		metadata: { caseId: options.caseId, batchId: batch.id },
 	});
 
-	// Transition connection status to syncing
-	await repos.mailbox.updateCursorAndStatus({
-		organizationId: options.organizationId,
-		connectionId: connection.id,
-		status: "syncing",
-	});
-
-	// 6. Acquire access token via refresh token
 	let accessToken: string;
 	try {
-		const tokenRes = await gmailClient.refreshAccessToken({ refreshToken });
-		accessToken = tokenRes.accessToken;
+		accessToken = (
+			await withProviderRetry(() =>
+				gmailClient.refreshAccessToken({ refreshToken }),
+			)
+		).accessToken;
 	} catch {
-		logger.warn("mailbox.auth_refresh_failed", {
-			requestId: options.requestId,
-			organizationId: options.organizationId,
-			connectionId: connection.id,
-		});
-
 		await repos.mailbox.updateCursorAndStatus({
 			organizationId: options.organizationId,
 			connectionId: connection.id,
 			status: "error",
 			lastFailureReason: "Authentication expired or revoked",
 		});
-
 		await repos.batches.transitionStatus({
 			organizationId: options.organizationId,
 			batchId: batch.id,
 			status: "failed",
 			failureReason: "Authentication expired or revoked",
 		});
-
 		return {
 			batchId: batch.id,
 			status: "failed",
@@ -173,309 +230,243 @@ export async function runMailboxSync(
 		};
 	}
 
-	// 7. Discover candidate message IDs (resuming from historyId or querying messages)
-	let candidateMessageIds: string[] = [];
 	let latestHistoryId: string | null = connection.syncCursor ?? null;
-	let rateLimitHit = false;
-	let authFailed = false;
-
-	const useHistory =
+	let candidateMessageIds: string[] = [];
+	let discoveryFailure: "auth" | "rate" | "provider" | null = null;
+	const useHistory = Boolean(
 		connection.syncCursor &&
-		!options.label &&
-		!options.startDate &&
-		!options.endDate;
+			!options.label &&
+			!options.startDate &&
+			!options.endDate,
+	);
+	let historyExpired = false;
 
 	if (useHistory) {
 		try {
-			const historyRes = await gmailClient.listHistory({
-				accessToken,
-				startHistoryId: connection.syncCursor as string,
-				maxResults: effectiveMaxMessages,
-			});
-
-			if (historyRes.historyId) {
-				latestHistoryId = historyRes.historyId;
-			}
-
 			const collected = new Set<string>();
-			for (const entry of historyRes.history ?? []) {
-				for (const added of entry.messagesAdded ?? []) {
-					if (added.message?.id) {
-						collected.add(added.message.id);
+			let pageToken: string | undefined;
+			do {
+				const page = await withProviderRetry(() =>
+					gmailClient.listHistory({
+						accessToken,
+						startHistoryId: connection.syncCursor as string,
+						maxResults: Math.min(500, effectiveMaxMessages - collected.size),
+						pageToken,
+					}),
+				);
+				for (const entry of page.history ?? []) {
+					for (const added of entry.messagesAdded ?? []) {
+						if (added.message.id) collected.add(added.message.id);
+						if (collected.size >= effectiveMaxMessages) break;
 					}
+					if (collected.size >= effectiveMaxMessages) break;
 				}
-			}
-			candidateMessageIds = Array.from(collected).slice(
-				0,
-				effectiveMaxMessages,
-			);
-		} catch (err) {
-			if (err instanceof GmailHistoryExpiredError) {
-				logger.info("mailbox.history_expired_falling_back", {
-					requestId: options.requestId,
-					organizationId: options.organizationId,
-					connectionId: connection.id,
-				});
-				// Fall back to message listing below
-			} else if (err instanceof GmailRateLimitError) {
-				rateLimitHit = true;
-			} else if (err instanceof GmailAuthError) {
-				authFailed = true;
-			} else {
-				logger.warn("mailbox.history_query_failed", {
-					requestId: options.requestId,
-					organizationId: options.organizationId,
-				});
-			}
+				if (page.historyId) latestHistoryId = page.historyId;
+				pageToken = page.nextPageToken;
+			} while (pageToken && collected.size < effectiveMaxMessages);
+			candidateMessageIds = [...collected];
+		} catch (error) {
+			if (error instanceof GmailHistoryExpiredError) historyExpired = true;
+			else if (error instanceof GmailAuthError) discoveryFailure = "auth";
+			else if (error instanceof GmailRateLimitError) discoveryFailure = "rate";
+			else discoveryFailure = "provider";
 		}
 	}
 
-	if (candidateMessageIds.length === 0 && !rateLimitHit && !authFailed) {
-		// Build search query q
-		const queryParts: string[] = [];
-		if (options.startDate) {
-			const startSec = Math.floor(new Date(options.startDate).getTime() / 1000);
-			if (!Number.isNaN(startSec)) {
-				queryParts.push(`after:${startSec}`);
-			}
-		}
-		if (options.endDate) {
-			const endSec = Math.floor(new Date(options.endDate).getTime() / 1000);
-			if (!Number.isNaN(endSec)) {
-				queryParts.push(`before:${endSec}`);
-			}
-		}
-
+	// Empty successful history means no changes. Full listing is used only for
+	// first/filtered syncs or an explicitly expired cursor.
+	if ((!useHistory || historyExpired) && !discoveryFailure) {
 		try {
-			const listRes = await gmailClient.listMessages({
-				accessToken,
-				q: queryParts.length > 0 ? queryParts.join(" ") : undefined,
-				labelIds: options.label ? [options.label] : undefined,
-				maxResults: effectiveMaxMessages,
-			});
-			candidateMessageIds = listRes.messages
-				.map((m) => m.id)
-				.slice(0, effectiveMaxMessages);
-		} catch (err) {
-			if (err instanceof GmailRateLimitError) {
-				rateLimitHit = true;
-			} else if (err instanceof GmailAuthError) {
-				authFailed = true;
-			} else {
-				logger.warn("mailbox.list_messages_failed", {
-					requestId: options.requestId,
-					organizationId: options.organizationId,
-				});
-			}
+			const queryParts: string[] = [];
+			if (options.startDate)
+				queryParts.push(
+					`after:${Math.floor(new Date(options.startDate).getTime() / 1000)}`,
+				);
+			if (options.endDate)
+				queryParts.push(
+					`before:${Math.floor(new Date(options.endDate).getTime() / 1000)}`,
+				);
+			const collected = new Set<string>();
+			let pageToken: string | undefined;
+			do {
+				const page = await withProviderRetry(() =>
+					gmailClient.listMessages({
+						accessToken,
+						q: queryParts.length ? queryParts.join(" ") : undefined,
+						labelIds: options.label ? [options.label] : undefined,
+						maxResults: Math.min(500, effectiveMaxMessages - collected.size),
+						pageToken,
+					}),
+				);
+				for (const message of page.messages) {
+					if (message.id) collected.add(message.id);
+					if (collected.size >= effectiveMaxMessages) break;
+				}
+				pageToken = page.nextPageToken;
+			} while (pageToken && collected.size < effectiveMaxMessages);
+			candidateMessageIds = [...collected];
+			const profile = await withProviderRetry(() =>
+				gmailClient.getProfile({ accessToken }),
+			);
+			if (profile.historyId) latestHistoryId = profile.historyId;
+		} catch (error) {
+			if (error instanceof GmailAuthError) discoveryFailure = "auth";
+			else if (error instanceof GmailRateLimitError) discoveryFailure = "rate";
+			else discoveryFailure = "provider";
 		}
 	}
 
-	// 8. Fetch, decode, store, verify, and dispatch candidate messages
 	let readyCount = 0;
 	let failedCount = 0;
 	let sequence = 0;
-
-	// Load existing evidence to deduplicate by idempotency key
 	const existingEvidenceList = await repos.evidence.listEvidence({
 		organizationId: options.organizationId,
 		caseId: options.caseId,
 	});
 	const existingByKey = new Map<string, EvidenceShell>();
-	for (const ev of existingEvidenceList) {
-		if (ev.idempotencyKey) {
-			existingByKey.set(ev.idempotencyKey, ev);
-		}
+	for (const evidence of existingEvidenceList) {
+		if (evidence.idempotencyKey)
+			existingByKey.set(evidence.idempotencyKey, evidence);
 	}
 
-	for (const messageId of candidateMessageIds) {
-		if (rateLimitHit || authFailed) break;
-
-		const idempotencyKey = `gmail:${connection.id}:${messageId}`;
-
-		// Re-sync deduplication check: never duplicate evidence or analysis runs
-		const existing = existingByKey.get(idempotencyKey);
-		if (existing) {
-			readyCount++;
-			continue;
-		}
-
-		// Fetch raw RFC 822 format with backoff on rate limit
-		let rawMessage: { raw: string; historyId?: string } | null = null;
-		for (let attempt = 0; attempt < 3; attempt++) {
+	if (!discoveryFailure) {
+		for (const messageId of candidateMessageIds) {
+			const idempotencyKey = `gmail:${connection.id}:${messageId}`;
+			if (existingByKey.has(idempotencyKey)) continue;
+			const currentSequence = sequence++;
 			try {
-				rawMessage = await gmailClient.getMessageRaw({
-					accessToken,
-					messageId,
-				});
-				break;
-			} catch (err) {
-				if (err instanceof GmailRateLimitError) {
-					if (attempt < 2) {
-						await new Promise((resolve) =>
-							setTimeout(resolve, 50 * (attempt + 1)),
-						);
-						continue;
-					}
-					rateLimitHit = true;
-					break;
+				const rawMessage = await withProviderRetry(() =>
+					gmailClient.getMessageRaw({ accessToken, messageId }),
+				);
+				const buffer = decodeGmailRaw(rawMessage.raw);
+				if (
+					rawMessage.historyId &&
+					(!latestHistoryId ||
+						BigInt(rawMessage.historyId) > BigInt(latestHistoryId))
+				) {
+					latestHistoryId = rawMessage.historyId;
 				}
-				if (err instanceof GmailAuthError) {
-					authFailed = true;
-					break;
-				}
-				logger.warn("mailbox.message_fetch_failed", {
-					requestId: options.requestId,
-					organizationId: options.organizationId,
-					messageId,
-				});
-				break;
-			}
-		}
-
-		if (!rawMessage || rateLimitHit || authFailed) {
-			if (!rateLimitHit && !authFailed) {
-				failedCount++;
-			}
-			continue;
-		}
-
-		if (rawMessage.historyId) {
-			latestHistoryId = rawMessage.historyId;
-		}
-
-		// Base64URL-decode raw message
-		const buffer = Buffer.from(rawMessage.raw, "base64url");
-		const sha256 = createHash("sha256")
-			.update(buffer)
-			.digest("hex")
-			.toLowerCase();
-
-		const artifactId = `gmail_${connection.id.slice(0, 8)}_${messageId}`;
-		const objectKey = evidenceObjectKey({
-			organizationId: options.organizationId,
-			caseId: options.caseId,
-			artifactId,
-		});
-
-		try {
-			// Write to private storage
-			await storage.putEvidence({
-				objectKey,
-				organizationId: options.organizationId,
-				caseId: options.caseId,
-				body: buffer,
-				sha256,
-			});
-
-			// Create verified evidence record
-			let createdEvidence: EvidenceShell;
-			try {
-				createdEvidence = await repos.evidence.createVerified({
+				const sha256 = createHash("sha256").update(buffer).digest("hex");
+				const objectKey = evidenceObjectKey({
 					organizationId: options.organizationId,
 					caseId: options.caseId,
-					batchId: batch.id,
-					sequence: sequence++,
-					sourceMessageId: messageId,
-					objectKey,
-					sha256,
-					byteSize: buffer.byteLength,
-					contentType: "message/rfc822",
-					idempotencyKey,
+					artifactId: `gmail_${connection.id.slice(0, 8)}_${messageId.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120)}`,
 				});
-			} catch (createErr) {
-				if (createErr instanceof DbConflictError) {
-					// Duplicate raced in concurrently
-					readyCount++;
+				await storage.putEvidence({
+					objectKey,
+					organizationId: options.organizationId,
+					caseId: options.caseId,
+					body: buffer,
+					sha256,
+				});
+
+				let createdEvidence: EvidenceShell;
+				try {
+					createdEvidence = await repos.evidence.createVerified({
+						organizationId: options.organizationId,
+						caseId: options.caseId,
+						batchId: batch.id,
+						sequence: currentSequence,
+						sourceMessageId: messageId,
+						summary: extractSafeSummary(buffer),
+						objectKey,
+						sha256,
+						byteSize: buffer.byteLength,
+						contentType: "message/rfc822",
+						idempotencyKey,
+					});
+				} catch (error) {
+					if (!(error instanceof DbConflictError)) throw error;
+					// A concurrent sync won the idempotency race. It is not a member
+					// of this batch and therefore is not counted here.
 					continue;
 				}
-				throw createErr;
+				existingByKey.set(idempotencyKey, createdEvidence);
+				readyCount++;
+
+				try {
+					const run = await repos.analysisRuns.createAnalysisRun({
+						organizationId: options.organizationId,
+						caseId: options.caseId,
+						evidenceId: createdEvidence.id,
+						status: "accepted",
+						idempotencyKey: `run:${idempotencyKey}`,
+					});
+					const intakeRequest: AnalysisIntakeRequest = {
+						analysisRunId: run.id,
+						organizationId: options.organizationId,
+						caseId: options.caseId,
+						requestedAt: new Date().toISOString(),
+						artifact: {
+							objectKey: createdEvidence.objectKey,
+							sha256: createdEvidence.sha256,
+							byteSize: createdEvidence.byteSize,
+							digestAlgorithm: "sha256",
+						},
+					};
+					await analyzer.dispatchIntake({
+						request: intakeRequest,
+						requestId: options.requestId,
+					});
+				} catch {
+					logger.warn("mailbox.analysis_dispatch_deferred", {
+						requestId: options.requestId,
+						organizationId: options.organizationId,
+						evidenceId: createdEvidence.id,
+					});
+					await recordAuditEvent(repos.audit, {
+						organizationId: options.organizationId,
+						actorUserId: options.actorUserId ?? null,
+						action: "analysis.dispatch_deferred",
+						resourceType: "evidence",
+						resourceId: createdEvidence.id,
+						requestId: options.requestId,
+						metadata: { retryable: true },
+					});
+				}
+			} catch (error) {
+				if (error instanceof GmailAuthError) discoveryFailure = "auth";
+				else if (error instanceof GmailRateLimitError)
+					discoveryFailure = "rate";
+				else failedCount++;
+				if (discoveryFailure) break;
 			}
-
-			existingByKey.set(idempotencyKey, createdEvidence);
-
-			// Dispatch analysis run
-			try {
-				const run = await repos.analysisRuns.createAnalysisRun({
-					organizationId: options.organizationId,
-					caseId: options.caseId,
-					evidenceId: createdEvidence.id,
-					status: "accepted",
-					idempotencyKey: `run:${idempotencyKey}`,
-				});
-
-				const intakeRequest: AnalysisIntakeRequest = {
-					analysisRunId: run.id,
-					organizationId: options.organizationId,
-					caseId: options.caseId,
-					requestedAt: new Date().toISOString(),
-					artifact: {
-						objectKey: createdEvidence.objectKey,
-						sha256: createdEvidence.sha256,
-						byteSize: createdEvidence.byteSize,
-						digestAlgorithm: "sha256",
-					},
-				};
-
-				await analyzer.dispatchIntake({
-					request: intakeRequest,
-					requestId: options.requestId,
-				});
-			} catch {
-				// Analysis failure degrades safely without failing the whole sync
-			}
-
-			await repos.batches.incrementCounts({
-				organizationId: options.organizationId,
-				batchId: batch.id,
-				readyIncrement: 1,
-			});
-
-			readyCount++;
-		} catch {
-			logger.warn("mailbox.message_ingest_failed", {
-				requestId: options.requestId,
-				organizationId: options.organizationId,
-			});
-			failedCount++;
 		}
 	}
 
-	// 9. Determine final sync outcome
-	let finalBatchStatus: "ready" | "partial" | "failed" = "ready";
-	let safeFailureReason: string | null = null;
+	let status: "ready" | "partial" | "failed" = "ready";
+	let failureReason: string | null = null;
+	if (discoveryFailure === "auth")
+		failureReason = "Authentication expired or revoked";
+	else if (discoveryFailure === "rate") failureReason = "Rate limit exceeded";
+	else if (discoveryFailure === "provider")
+		failureReason = "Mailbox provider unavailable";
+	else if (failedCount > 0) failureReason = "Some messages failed to sync";
+	if (failureReason) status = readyCount > 0 ? "partial" : "failed";
 
-	if (authFailed) {
-		safeFailureReason = "Authentication expired or revoked";
-		finalBatchStatus = readyCount > 0 ? "partial" : "failed";
-	} else if (rateLimitHit) {
-		safeFailureReason = "Rate limit exceeded";
-		finalBatchStatus = readyCount > 0 ? "partial" : "failed";
-	} else if (failedCount > 0 && readyCount === 0) {
-		finalBatchStatus = "failed";
-		safeFailureReason = "Sync failed to process messages";
-	} else if (failedCount > 0) {
-		finalBatchStatus = "partial";
-		safeFailureReason = "Some messages failed to sync";
-	}
-
-	// Transition batch status
+	const messageCount = readyCount + failedCount;
+	await repos.batches.setCounts({
+		organizationId: options.organizationId,
+		batchId: batch.id,
+		messageCount,
+		readyCount,
+		failedCount,
+	});
 	await repos.batches.transitionStatus({
 		organizationId: options.organizationId,
 		batchId: batch.id,
-		status: finalBatchStatus,
-		failureReason: safeFailureReason,
+		status,
+		failureReason,
 	});
 
-	// Update connection cursor and status
 	await repos.mailbox.updateCursorAndStatus({
 		organizationId: options.organizationId,
 		connectionId: connection.id,
-		status: authFailed ? "error" : "connected",
-		syncCursor: latestHistoryId,
+		status: discoveryFailure === "auth" ? "error" : "connected",
+		...(discoveryFailure ? {} : { syncCursor: latestHistoryId }),
 		lastSyncedAt: new Date(),
-		lastFailureReason: safeFailureReason,
+		lastFailureReason: failureReason,
 	});
-
 	await recordAuditEvent(repos.audit, {
 		organizationId: options.organizationId,
 		actorUserId: options.actorUserId ?? null,
@@ -486,18 +477,17 @@ export async function runMailboxSync(
 		metadata: {
 			caseId: options.caseId,
 			batchId: batch.id,
-			messageCount: readyCount + failedCount,
+			messageCount,
 			readyCount,
 			failedCount,
 		},
 	});
-
 	return {
 		batchId: batch.id,
-		status: finalBatchStatus,
-		messageCount: readyCount + failedCount,
+		status,
+		messageCount,
 		readyCount,
 		failedCount,
-		failureReason: safeFailureReason,
+		failureReason,
 	};
 }

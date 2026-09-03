@@ -71,6 +71,7 @@ export interface EvidenceStorage {
 		body: Uint8Array;
 		sha256: string;
 		contentType?: string;
+		maxBytes?: number;
 	}): Promise<void>;
 	deleteEvidence(input: {
 		objectKey: string;
@@ -101,11 +102,15 @@ export class S3EvidenceStorage implements EvidenceStorage {
 		body: Uint8Array;
 		sha256: string;
 		contentType?: string;
+		maxBytes?: number;
 	}): Promise<void> {
 		assertEvidenceObjectKeyForScope(input.objectKey, input);
 		if (!/^[0-9a-fA-F]{64}$/.test(input.sha256))
 			throw new Error("invalid evidence digest");
-		if (input.body.byteLength <= 0 || input.body.byteLength > MAX_EML_BYTES) {
+		if (
+			input.body.byteLength <= 0 ||
+			input.body.byteLength > (input.maxBytes ?? MAX_EML_BYTES)
+		) {
 			throw new Error("evidence exceeds the configured size limit");
 		}
 		await this.client.send(
@@ -225,6 +230,7 @@ export class MemoryEvidenceStorage implements EvidenceStorage {
 		body: Uint8Array;
 		sha256: string;
 		contentType?: string;
+		maxBytes?: number;
 	}): Promise<void> {
 		if (this.simulatePutFailure) {
 			throw new Error("Simulated storage write failure");
@@ -232,7 +238,10 @@ export class MemoryEvidenceStorage implements EvidenceStorage {
 		assertEvidenceObjectKeyForScope(input.objectKey, input);
 		if (!/^[0-9a-fA-F]{64}$/.test(input.sha256))
 			throw new Error("invalid evidence digest");
-		if (input.body.byteLength <= 0 || input.body.byteLength > MAX_EML_BYTES) {
+		if (
+			input.body.byteLength <= 0 ||
+			input.body.byteLength > (input.maxBytes ?? MAX_EML_BYTES)
+		) {
 			throw new Error("evidence exceeds the configured size limit");
 		}
 		this.objects.set(input.objectKey, {

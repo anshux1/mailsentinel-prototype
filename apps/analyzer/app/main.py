@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import multiprocessing
 import secrets
 import threading
-from collections.abc import Callable
+from collections.abc import Generator
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -37,6 +38,7 @@ internal_bearer = HTTPBearer(auto_error=False)
 logger = get_structured_logger("mailsentinel.http")
 _intake_lock = threading.RLock()
 _fallback_enqueued_runs: set[str] = set()
+_segmentation_slots = threading.BoundedSemaphore(value=4)
 
 
 def require_internal_token(
@@ -60,7 +62,12 @@ def create_storage_client(settings: Settings) -> Any:
         region_name=settings.s3_region,
         aws_access_key_id=settings.s3_access_key_id,
         aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
-        config=Config(s3={"addressing_style": "path" if settings.s3_force_path_style else "auto"}),
+        config=Config(
+            connect_timeout=max(1.0, min(3.0, settings.execution_timeout_seconds / 6)),
+            read_timeout=max(1.0, settings.execution_timeout_seconds / 3),
+            retries={"max_attempts": 2, "mode": "standard"},
+            s3={"addressing_style": "path" if settings.s3_force_path_style else "auto"},
+        ),
     )
 
 
@@ -145,13 +152,12 @@ def _enqueue_once(analysis_run_id: str) -> tuple[bool, AnalysisStatusValue]:
         latest = repository.get_status(analysis_run_id)
         return False, latest or AnalysisStatusValue.ACCEPTED
     except Exception:
-        # Tests and local health checks may intentionally run without PostgreSQL.
-        # This fallback is process-local and never overrides an operational DB.
-        with _intake_lock:
-            if analysis_run_id in _fallback_enqueued_runs:
-                return False, AnalysisStatusValue.ACCEPTED
-            _fallback_enqueued_runs.add(analysis_run_id)
-            return True, AnalysisStatusValue.ACCEPTED
+        # Production intake must fail closed. Process-local deduplication cannot
+        # provide correctness across workers or restarts.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="analysis intake database unavailable",
+        ) from None
 
 
 @app.post(
@@ -167,9 +173,22 @@ def intake(payload: AnalysisIntakeRequest, request: Request) -> AnalysisIntakeAc
         try:
             process_analysis.send(payload.analysis_run_id, request_id=req_id)
         except Exception:
-            # Do not permanently suppress a retry if broker publication fails.
-            with _intake_lock:
-                _fallback_enqueued_runs.discard(payload.analysis_run_id)
+            # Release only an unclaimed queue reservation. If a broker accepted
+            # the message before raising, a racing worker changes the state to
+            # processing and this compare-and-set becomes a harmless no-op.
+            if get_settings().app_env == "test":
+                with _intake_lock:
+                    _fallback_enqueued_runs.discard(payload.analysis_run_id)
+            else:
+                try:
+                    _repository().release_enqueue(payload.analysis_run_id)
+                except Exception:
+                    log_event(
+                        logger,
+                        40,
+                        "analysis.intake_release_failed",
+                        analysisRunId=payload.analysis_run_id,
+                    )
             raise HTTPException(status_code=503, detail="analysis queue unavailable") from None
     log_event(
         logger,
@@ -231,29 +250,77 @@ def get_evidence_store() -> EvidenceStore:
     return S3EvidenceStore(get_settings())
 
 
-def _run_segment_with_watchdog(
-    callback: Callable[[], SegmentationResult],
-    timeout_seconds: float,
-) -> SegmentationResult:
-    result: list[SegmentationResult] = []
-    error: list[BaseException] = []
+def _segment_process_target(
+    connection: Any,
+    raw: bytes,
+    max_container_bytes: int,
+    max_container_messages: int,
+    max_eml_bytes: int,
+) -> None:
+    try:
+        result = segment(
+            raw,
+            max_container_bytes=max_container_bytes,
+            max_container_messages=max_container_messages,
+            max_eml_bytes=max_eml_bytes,
+        )
+        connection.send(("ok", result.model_dump(mode="json")))
+    except ParseLimitError as error:
+        connection.send(("limit", error.code, str(error)))
+    except BaseException:  # noqa: BLE001 - never serialize hostile/internal exception details
+        connection.send(("error",))
+    finally:
+        connection.close()
 
-    def target() -> None:
-        try:
-            result.append(callback())
-        except BaseException as exc:  # noqa: BLE001
-            error.append(exc)
 
-    worker = threading.Thread(target=target, name="mailsentinel-segment", daemon=True)
+def _run_segment_in_process(raw: bytes, settings: Settings) -> SegmentationResult:
+    context: Any = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    worker = context.Process(
+        target=_segment_process_target,
+        args=(
+            sender,
+            raw,
+            settings.max_container_bytes,
+            settings.max_container_messages,
+            settings.max_eml_bytes,
+        ),
+        name="mailsentinel-segment",
+        daemon=True,
+    )
     worker.start()
-    worker.join(timeout=max(0.001, timeout_seconds))
+    sender.close()
+    worker.join(max(0.001, settings.execution_timeout_seconds))
     if worker.is_alive():
+        worker.terminate()
+        worker.join(2.0)
+        if worker.is_alive() and hasattr(worker, "kill"):
+            worker.kill()
+            worker.join(1.0)
+        receiver.close()
         raise TimeoutError("segmentation exceeded configured watchdog")
-    if error:
-        raise error[0]
-    if not result:
-        raise RuntimeError("segmentation returned no result")
-    return result[0]
+    if not receiver.poll():
+        receiver.close()
+        raise RuntimeError("segmentation worker returned no result")
+    message = receiver.recv()
+    receiver.close()
+    if message[0] == "ok":
+        return SegmentationResult.model_validate(message[1])
+    if message[0] == "limit":
+        raise ParseLimitError(message[1], message[2])
+    raise RuntimeError("segmentation worker failed")
+
+
+def acquire_segmentation_slot() -> Generator[None, None, None]:
+    if not _segmentation_slots.acquire(blocking=False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="segmentation capacity exhausted",
+        )
+    try:
+        yield
+    finally:
+        _segmentation_slots.release()
 
 
 @app.post(
@@ -264,6 +331,7 @@ def _run_segment_with_watchdog(
 def segment_evidence(
     payload: SegmentationRequest,
     evidence_store: Annotated[EvidenceStore, Depends(get_evidence_store)],
+    _slot: Annotated[None, Depends(acquire_segmentation_slot)],
 ) -> SegmentationResult:
     settings = get_settings()
     try:
@@ -290,17 +358,8 @@ def segment_evidence(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage verification failed"
         ) from None
 
-    def execute_segment() -> SegmentationResult:
-        return segment(
-            raw,
-            max_container_bytes=settings.max_container_bytes,
-            max_container_messages=settings.max_container_messages,
-            max_eml_bytes=settings.max_eml_bytes,
-        )
-
     try:
-        timeout = getattr(settings, "execution_timeout_seconds", 120.0)
-        res = _run_segment_with_watchdog(execute_segment, timeout)
+        res = _run_segment_in_process(raw, settings)
     except TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="segmentation execution timed out"

@@ -1,7 +1,8 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
 	boolean,
+	check,
 	foreignKey,
 	index,
 	integer,
@@ -166,9 +167,7 @@ export const ingestionBatches = pgTable(
 			.references(() => cases.id, { onDelete: "cascade" }),
 		source: ingestionBatchSource("source").notNull(),
 		status: ingestionBatchStatus("status").default("pending").notNull(),
-		containerEvidenceId: text("container_evidence_id").references((): AnyPgColumn => evidenceMetadata.id, {
-			onDelete: "set null",
-		}),
+		containerEvidenceId: text("container_evidence_id"),
 		messageCount: integer("message_count").default(0).notNull(),
 		readyCount: integer("ready_count").default(0).notNull(),
 		failedCount: integer("failed_count").default(0).notNull(),
@@ -182,8 +181,16 @@ export const ingestionBatches = pgTable(
 			foreignColumns: [cases.organizationId, cases.id],
 			name: "ingestion_batches_org_case_fk",
 		}),
+		check("ingestion_batches_message_count_check", sql`${table.messageCount} >= 0`),
+		check("ingestion_batches_ready_count_check", sql`${table.readyCount} >= 0`),
+		check("ingestion_batches_failed_count_check", sql`${table.failedCount} >= 0`),
+		check(
+			"ingestion_batches_count_total_check",
+			sql`${table.readyCount} + ${table.failedCount} <= ${table.messageCount}`,
+		),
 		uniqueIndex("ingestion_batches_org_case_id_uidx").on(table.organizationId, table.caseId, table.id),
 		uniqueIndex("ingestion_batches_org_id_uidx").on(table.organizationId, table.id),
+		uniqueIndex("ingestion_batches_org_container_uidx").on(table.organizationId, table.containerEvidenceId),
 		index("ingestion_batches_org_case_created_idx").on(table.organizationId, table.caseId, table.createdAt),
 		index("ingestion_batches_org_case_idx").on(table.organizationId, table.caseId),
 	],
@@ -202,6 +209,13 @@ export const evidenceMetadata = pgTable(
 		batchId: text("batch_id").references((): AnyPgColumn => ingestionBatches.id, { onDelete: "set null" }),
 		sequence: integer("sequence"),
 		sourceMessageId: text("source_message_id"),
+		summary: jsonb("summary").$type<{
+			from?: string | null;
+			fromDisplayName?: string | null;
+			subject?: string | null;
+			date?: string | null;
+			messageId?: string | null;
+		}>(),
 		objectKey: text("object_key").notNull().unique(),
 		sha256: text("sha256").notNull(),
 		byteSize: integer("byte_size").notNull(),
@@ -228,8 +242,10 @@ export const evidenceMetadata = pgTable(
 		uniqueIndex("evidence_org_case_id_uidx").on(table.organizationId, table.caseId, table.id),
 		uniqueIndex("evidence_org_id_uidx").on(table.organizationId, table.id),
 		uniqueIndex("evidence_org_idempotency_key_uidx").on(table.organizationId, table.idempotencyKey),
+		uniqueIndex("evidence_org_batch_seq_uidx").on(table.organizationId, table.batchId, table.sequence),
+		check("evidence_sequence_check", sql`${table.sequence} IS NULL OR ${table.sequence} >= 0`),
+		check("evidence_byte_size_check", sql`${table.byteSize} > 0`),
 		index("evidence_org_case_idx").on(table.organizationId, table.caseId),
-		index("evidence_org_batch_seq_idx").on(table.organizationId, table.batchId, table.sequence),
 		index("evidence_org_status_idx").on(table.organizationId, table.status),
 		index("evidence_org_created_idx").on(table.organizationId, table.createdAt),
 	],

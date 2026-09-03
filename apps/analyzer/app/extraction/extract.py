@@ -35,6 +35,7 @@ from app.contracts.models import (
     NestedMessageObservation,
     ReceivedHop,
     RoutingAnomalyObservation,
+    VerdictValue,
 )
 from app.parsing.parser import ParsedMessage, sanitize_filename
 
@@ -1242,8 +1243,10 @@ def extract_nested_messages(
     # Queue items: (path, part_message, depth)
     queue: list[tuple[str, Message, int]] = [("1", root_message, 0)]
 
-    while queue and len(results) < max_nested_messages:
+    visited_parts = 0
+    while queue and len(results) < max_nested_messages and visited_parts < max_mime_parts:
         path, current_part, depth = queue.pop(0)
+        visited_parts += 1
 
         if current_part.is_multipart():
             payload = current_part.get_payload()
@@ -1272,6 +1275,7 @@ def extract_nested_messages(
                             child_sha = hashlib.sha256(child_bytes).hexdigest()
                             child_size = len(child_bytes)
 
+                            parse_succeeded = True
                             try:
                                 child_parsed = parse_message(
                                     child_bytes,
@@ -1282,8 +1286,10 @@ def extract_nested_messages(
                                     max_attachment_bytes=max_attachment_bytes,
                                 )
                             except ParseLimitError as err:
+                                parse_succeeded = False
                                 child_parsed = ParsedMessage(warnings=[f"{child_path}:{err.code}"])
                             except Exception:
+                                parse_succeeded = False
                                 child_parsed = ParsedMessage(warnings=[f"{child_path}:parse_error"])
 
                             n_headers = extract_headers(child_parsed)
@@ -1316,7 +1322,7 @@ def extract_nested_messages(
                                 routing_anomalies=n_routing,
                                 auth_conflicts=n_conflicts,
                             )
-                            n_verdict = verdict_for(n_score.final_score)
+                            n_verdict = verdict_for(n_score.final_score) if parse_succeeded else VerdictValue.UNKNOWN
 
                             results.append(
                                 NestedMessageObservation(

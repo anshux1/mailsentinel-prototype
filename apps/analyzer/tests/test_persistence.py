@@ -19,6 +19,31 @@ from app.persistence.postgres import PostgresAnalysisRepository
 VALID_MESSAGE = b"From: a@b.com\nSubject: Hi\n\nHello"
 
 
+def test_queue_reservation_can_only_be_released_before_worker_claim() -> None:
+    run = RunInput("release_run", "org", "case", "organizations/org/cases/case/artifacts/a.eml", "a" * 64, 1)
+    repo = InMemoryAnalysisRepository([run])
+    assert repo.enqueue_once(run.analysis_run_id) is True
+    assert repo.release_enqueue(run.analysis_run_id) is True
+    assert repo.get_status(run.analysis_run_id) == AnalysisStatusValue.ACCEPTED
+    assert repo.enqueue_once(run.analysis_run_id) is True
+    assert repo.claim(run.analysis_run_id) is True
+    assert repo.release_enqueue(run.analysis_run_id) is False
+    assert repo.get_status(run.analysis_run_id) == AnalysisStatusValue.PROCESSING
+
+
+def test_late_progress_cannot_overwrite_terminal_failure_phase() -> None:
+    run = RunInput("late_run", "org", "case", "organizations/org/cases/case/artifacts/a.eml", "a" * 64, 1)
+    repo = InMemoryAnalysisRepository([run])
+    assert repo.claim(run.analysis_run_id) is True
+    repo.save_failed(run.analysis_run_id, "analysis_failed", "failed", True)
+    repo.update_phase(run.analysis_run_id, "completed", 100)
+    status = repo.get_detailed_status(run.analysis_run_id)
+    assert status is not None
+    assert status.status == AnalysisStatusValue.FAILED
+    assert status.phase is not None and status.phase.value == "failed"
+    assert status.progress is None
+
+
 def make_result(
     run_id: str,
     analysis_version: str = "prototype-1",

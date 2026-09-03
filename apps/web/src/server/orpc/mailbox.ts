@@ -93,6 +93,12 @@ export function toMailboxConnectionOutput(
 	};
 }
 
+const mailboxIdentifierSchema = z
+	.string()
+	.min(1)
+	.max(200)
+	.regex(/^[A-Za-z0-9_-]+$/);
+
 export const listMailboxConnectionsInput = z
 	.object({
 		status: z
@@ -106,16 +112,21 @@ export const listMailboxConnectionsOutputSchema = z.object({
 });
 
 export const getMailboxStatusInput = z.object({
-	connectionId: z.string().min(1, "Connection ID is required"),
+	connectionId: mailboxIdentifierSchema,
 });
 
 export const startMailboxSyncInput = z.object({
-	connectionId: z.string().min(1, "Connection ID is required"),
-	caseId: z.string().min(1, "Case ID is required"),
+	connectionId: mailboxIdentifierSchema,
+	caseId: mailboxIdentifierSchema,
 	maxMessages: z.number().int().min(1).max(1000).default(200).optional(),
-	label: z.string().optional(),
-	startDate: z.string().optional(),
-	endDate: z.string().optional(),
+	label: z
+		.string()
+		.min(1)
+		.max(200)
+		.regex(/^[A-Za-z0-9_-]+$/)
+		.optional(),
+	startDate: z.iso.datetime({ offset: true }).optional(),
+	endDate: z.iso.datetime({ offset: true }).optional(),
 });
 
 export const startMailboxSyncOutputSchema = z.object({
@@ -128,7 +139,7 @@ export const startMailboxSyncOutputSchema = z.object({
 });
 
 export const disconnectMailboxInput = z.object({
-	connectionId: z.string().min(1, "Connection ID is required"),
+	connectionId: mailboxIdentifierSchema,
 });
 
 export const disconnectMailboxOutputSchema = z.object({

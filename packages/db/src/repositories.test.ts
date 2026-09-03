@@ -1356,6 +1356,7 @@ describe("tenant-scoped ingestion batch repository (Memory)", () => {
 			caseId: "case_1",
 			source: "upload_container",
 			status: "segmenting",
+			messageCount: 4,
 		});
 
 		const transitioned = await repos.batches.transitionStatus({

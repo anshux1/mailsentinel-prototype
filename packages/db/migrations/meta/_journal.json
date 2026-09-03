@@ -43,6 +43,13 @@
       "when": 1788455885674,
       "tag": "0005_unique_big_bertha",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788463268751,
+      "tag": "0006_big_sentry",
+      "breakpoints": true
     }
   ]
 }

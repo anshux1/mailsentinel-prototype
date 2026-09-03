@@ -35,6 +35,21 @@ describe("web environment", () => {
 		["invalid mode", { ...valid, WEB_DATA_MODE: "maybe" }],
 	])("rejects %s", (_name, input) =>
 		expect(() => validateWebEnvironment(input)).toThrow());
+	it("requires complete connector configuration when mailbox support is enabled", () => {
+		expect(() =>
+			validateWebEnvironment({ ...valid, MAILBOX_CONNECTORS_ENABLED: "true" }),
+		).toThrow(/ENCRYPTION_KEY/i);
+		expect(
+			validateWebEnvironment({
+				...valid,
+				MAILBOX_CONNECTORS_ENABLED: "true",
+				MAILBOX_TOKEN_ENCRYPTION_KEY: "k".repeat(32),
+				GOOGLE_OAUTH_CLIENT_ID: "client-id",
+				GOOGLE_OAUTH_CLIENT_SECRET: "client-secret",
+				GMAIL_REDIRECT_URI: "http://localhost:3000/api/mailbox/gmail/callback",
+			}),
+		).toMatchObject({ MAILBOX_CONNECTORS_ENABLED: true });
+	});
 	it.each([
 		["database URL", "NEXT_PUBLIC_DATABASE_URL"],
 		["API key", "NEXT_PUBLIC_PROVIDER_API_KEY"],

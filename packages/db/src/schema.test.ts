@@ -311,7 +311,33 @@ describe("database constraints and migration verification", () => {
 		expect(indexNames.has("ingestion_batches_org_case_idx")).toBe(true);
 		expect(indexNames.has("mailbox_connections_org_provider_email_uidx")).toBe(true);
 		expect(indexNames.has("mailbox_connections_org_idx")).toBe(true);
-		expect(indexNames.has("evidence_org_batch_seq_idx")).toBe(true);
+		expect(indexNames.has("evidence_org_batch_seq_uidx")).toBe(true);
+	});
+
+	it("enforces tenant-scoped container references and unique child sequences", async () => {
+		const uid = randomUUID().replace(/-/g, "").slice(0, 8);
+		const orgA = `org_ca_${uid}`;
+		const orgB = `org_cb_${uid}`;
+		const caseA = `case_ca_${uid}`;
+		const caseB = `case_cb_${uid}`;
+		const evidenceA = `ev_ca_${uid}`;
+		const batchB = `batch_cb_${uid}`;
+		await sql`INSERT INTO organizations (id, name) VALUES (${orgA}, 'A'), (${orgB}, 'B')`;
+		await sql`INSERT INTO cases (id, organization_id, title) VALUES (${caseA}, ${orgA}, 'A'), (${caseB}, ${orgB}, 'B')`;
+		await sql`INSERT INTO evidence_metadata (id, organization_id, case_id, object_key, sha256, byte_size, status)
+			VALUES (${evidenceA}, ${orgA}, ${caseA}, ${`container_${uid}`}, 'hash', 10, 'verified')`;
+		await expect(sql`INSERT INTO ingestion_batches
+			(id, organization_id, case_id, source, status, container_evidence_id)
+			VALUES (${batchB}, ${orgB}, ${caseB}, 'upload_container', 'segmenting', ${evidenceA})`).rejects.toThrow();
+		await sql`INSERT INTO ingestion_batches (id, organization_id, case_id, source, status, message_count)
+			VALUES (${batchB}, ${orgB}, ${caseB}, 'upload_container', 'segmenting', 2)`;
+		await sql`INSERT INTO evidence_metadata
+			(id, organization_id, case_id, batch_id, sequence, object_key, sha256, byte_size, status)
+			VALUES (${`child1_${uid}`}, ${orgB}, ${caseB}, ${batchB}, 0, ${`child1_${uid}`}, 'hash', 5, 'verified')`;
+		await expect(sql`INSERT INTO evidence_metadata
+			(id, organization_id, case_id, batch_id, sequence, object_key, sha256, byte_size, status)
+			VALUES (${`child2_${uid}`}, ${orgB}, ${caseB}, ${batchB}, 0, ${`child2_${uid}`}, 'hash', 5, 'verified')`).rejects.toThrow();
+		await sql`DELETE FROM organizations WHERE id IN (${orgA}, ${orgB})`;
 	});
 
 	it("rejects cross-tenant composite FK violations between cases and ingestion_batches", async () => {

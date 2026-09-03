@@ -161,6 +161,7 @@ describe("application router", () => {
 
 	it("integrates evidence router procedures in appRouter", async () => {
 		const { MemoryEvidenceRepository } = await import("@mailsentinel/db");
+		const { MemoryAnalyzerClient } = await import("@/server/analyzer-client");
 		const { MemoryEvidenceStorage } = await import("@/server/storage/s3");
 
 		const caseRepo = new MemoryCaseRepository([testCase]);
@@ -179,6 +180,7 @@ describe("application router", () => {
 				audit: auditRepo,
 			},
 			storage,
+			analyzerClient: new MemoryAnalyzerClient(),
 		};
 		const invClient = createRouterClient(router, { context: invContext });
 
