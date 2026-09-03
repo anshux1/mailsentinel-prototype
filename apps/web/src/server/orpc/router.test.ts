@@ -146,4 +146,80 @@ describe("application router", () => {
 		const result = await ownerClient.report.generate({ caseId: "case_01" });
 		expect(result.status).toBe("deferred");
 	});
+
+	it("integrates evidence router procedures in appRouter", async () => {
+		const { MemoryEvidenceRepository } = await import("@mailsentinel/db");
+		const { MemoryEvidenceStorage } = await import("@/server/storage/s3");
+
+		const caseRepo = new MemoryCaseRepository([testCase]);
+		const evidenceRepo = new MemoryEvidenceRepository([], [testCase]);
+		const auditRepo = new MemoryAuditRepository([]);
+		const storage = new MemoryEvidenceStorage();
+
+		const invContext: RpcContext = {
+			requestId: "req_inv_ev",
+			userId: "user_investigator",
+			organizationId: "org_01",
+			role: "investigator",
+			repos: {
+				cases: caseRepo,
+				evidence: evidenceRepo,
+				audit: auditRepo,
+			},
+			storage,
+		};
+		const invClient = createRouterClient(router, { context: invContext });
+
+		const body = Buffer.from("Subject: Test\r\n\r\nBody");
+		const sha256 = (await import("node:crypto"))
+			.createHash("sha256")
+			.update(body)
+			.digest("hex");
+
+		const pending = await invClient.evidence.createUpload({
+			caseId: "case_01",
+			byteSize: body.byteLength,
+			sha256,
+		});
+		expect(pending.status).toBe("pending");
+		expect(pending).not.toHaveProperty("objectKey");
+		expect(pending).not.toHaveProperty("idempotencyKey");
+
+		const completed = await invClient.evidence.completeUpload({
+			caseId: "case_01",
+			evidenceId: pending.id,
+			body: body.toString("base64"),
+		});
+		expect(completed.status).toBe("verified");
+		expect(completed).not.toHaveProperty("objectKey");
+		expect(completed).not.toHaveProperty("idempotencyKey");
+
+		const viewerContext: RpcContext = {
+			requestId: "req_viewer_ev",
+			userId: "user_viewer",
+			organizationId: "org_01",
+			role: "viewer",
+			repos: {
+				cases: caseRepo,
+				evidence: evidenceRepo,
+			},
+		};
+		const viewerClient = createRouterClient(router, {
+			context: viewerContext,
+		});
+
+		const list = await viewerClient.evidence.list({ caseId: "case_01" });
+		expect(list).toHaveLength(1);
+		expect(list[0]?.id).toBe(pending.id);
+		expect(list[0]).not.toHaveProperty("objectKey");
+		expect(list[0]).not.toHaveProperty("idempotencyKey");
+
+		const single = await viewerClient.evidence.get({
+			caseId: "case_01",
+			evidenceId: pending.id,
+		});
+		expect(single?.id).toBe(pending.id);
+		expect(single).not.toHaveProperty("objectKey");
+		expect(single).not.toHaveProperty("idempotencyKey");
+	});
 });

@@ -10,6 +10,7 @@ import { auth } from "@/server/auth";
 import type { MembershipRole } from "@/server/auth/permissions";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
+import type { EvidenceStorage } from "@/server/storage/s3";
 
 export type RpcMembership = {
 	id?: string;
@@ -36,6 +37,7 @@ export type RpcContext = {
 	user?: { id: string; email?: string; name?: string } | null;
 	membershipError?: MembershipErrorType | null;
 	repos?: RpcRepositories;
+	storage?: EvidenceStorage;
 };
 
 export type AuthClientLike = {
@@ -91,6 +93,7 @@ export async function createRpcContext(
 		authClient?: AuthClientLike;
 		dbClient?: typeof db;
 		repos?: RpcRepositories;
+		storage?: EvidenceStorage;
 	},
 ): Promise<RpcContext> {
 	const requestId =
@@ -108,6 +111,7 @@ export async function createRpcContext(
 			membership: null,
 			user: null,
 			repos: dependencies?.repos,
+			storage: dependencies?.storage,
 		};
 	}
 
@@ -138,6 +142,7 @@ export async function createRpcContext(
 			user: session.user,
 			membershipError,
 			repos: dependencies?.repos,
+			storage: dependencies?.storage,
 		};
 	}
 
@@ -192,6 +197,7 @@ export async function createRpcContext(
 			user: session.user,
 			membershipError: "not_member",
 			repos: dependencies?.repos,
+			storage: dependencies?.storage,
 		};
 	}
 
@@ -204,5 +210,6 @@ export async function createRpcContext(
 		user: session.user,
 		membershipError: null,
 		repos: dependencies?.repos,
+		storage: dependencies?.storage,
 	};
 }

@@ -7,6 +7,7 @@ import {
 import { z } from "zod";
 import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
+import { evidenceRouter } from "./evidence";
 import {
 	investigatorProcedure,
 	publicProcedure,
@@ -101,6 +102,7 @@ export const router = {
 				return createdCase;
 			}),
 	},
+	evidence: evidenceRouter,
 	analysis: {
 		getStatus: viewerProcedure
 			.input(z.object({ analysisRunId: z.string().min(1) }))
