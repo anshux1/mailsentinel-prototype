@@ -504,13 +504,13 @@ describe("PostgreSQL repository integration tests", () => {
 				failureCode: "TIMEOUT",
 			});
 
-			// Retry 1: succeeds, transitions to queued, attempts = 1
+			// Retry 1: succeeds, transitions to accepted, attempts = 1
 			const retried1 = await repos.analysisRuns.retryAnalysisRun({
 				organizationId: orgA,
 				analysisRunId: retryableRun.id,
 				maxAttempts: 2,
 			});
-			expect(retried1.status).toBe("queued");
+			expect(retried1.status).toBe("accepted");
 			expect(retried1.attempts).toBe(1);
 			expect(retried1.failureCode).toBeNull();
 
@@ -518,7 +518,7 @@ describe("PostgreSQL repository integration tests", () => {
 			await repos.analysisRuns.transitionStatus({
 				organizationId: orgA,
 				analysisRunId: retryableRun.id,
-				fromStatus: "queued",
+				fromStatus: ["accepted", "queued"],
 				toStatus: "failed",
 				retryable: true,
 			});
@@ -529,13 +529,14 @@ describe("PostgreSQL repository integration tests", () => {
 				analysisRunId: retryableRun.id,
 				maxAttempts: 2,
 			});
+			expect(retried2.status).toBe("accepted");
 			expect(retried2.attempts).toBe(2);
 
 			// Fail again
 			await repos.analysisRuns.transitionStatus({
 				organizationId: orgA,
 				analysisRunId: retryableRun.id,
-				fromStatus: "queued",
+				fromStatus: ["accepted", "queued"],
 				toStatus: "failed",
 				retryable: true,
 			});

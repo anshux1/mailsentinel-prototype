@@ -7,6 +7,7 @@ import {
 import { z } from "zod";
 import { recordAuditEvent } from "@/server/audit";
 import { db } from "@/server/db";
+import { analysisRouter } from "./analysis";
 import { evidenceRouter } from "./evidence";
 import {
 	investigatorProcedure,
@@ -103,15 +104,7 @@ export const router = {
 			}),
 	},
 	evidence: evidenceRouter,
-	analysis: {
-		getStatus: viewerProcedure
-			.input(z.object({ analysisRunId: z.string().min(1) }))
-			.output(deferred)
-			.handler(() => ({
-				status: "deferred",
-				reason: "No analysis has been started",
-			})),
-	},
+	analysis: analysisRouter,
 	report: {
 		generate: investigatorProcedure
 			.input(z.object({ caseId: z.string().min(1) }))

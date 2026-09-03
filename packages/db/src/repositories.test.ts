@@ -4,6 +4,7 @@ import {
 	type CaseShell,
 	ConflictError,
 	canonicalJsonStringify,
+	createAnalysisRunWithAudit,
 	createEvidenceWithRunAndAudit,
 	createMemoryRepositories,
 	DependencyError,
@@ -342,6 +343,7 @@ describe("tenant-scoped analysis run repository (Memory)", () => {
 		});
 		expect(queued.status).toBe("queued");
 		expect(queued.phase).toBe("queued");
+		expect(queued.queuedAt).toBeInstanceOf(Date);
 
 		// Transition queued -> processing
 		const processing = await repos.analysisRuns.transitionStatus({
@@ -634,13 +636,13 @@ describe("tenant-scoped analysis run repository (Memory)", () => {
 			failureMessage: "Transient enrichment timeout",
 		});
 
-		// First retry succeeds: resets status to queued, attempts becomes 1
+		// First retry succeeds: resets status to accepted, attempts becomes 1
 		const retried1 = await repos.analysisRuns.retryAnalysisRun({
 			organizationId: "org_a",
 			analysisRunId: run2.id,
 			maxAttempts: 2,
 		});
-		expect(retried1.status).toBe("queued");
+		expect(retried1.status).toBe("accepted");
 		expect(retried1.attempts).toBe(1);
 		expect(retried1.failureCode).toBeNull();
 
@@ -648,7 +650,7 @@ describe("tenant-scoped analysis run repository (Memory)", () => {
 		await repos.analysisRuns.transitionStatus({
 			organizationId: "org_a",
 			analysisRunId: run2.id,
-			fromStatus: "queued",
+			fromStatus: ["accepted", "queued"],
 			toStatus: "failed",
 			retryable: true,
 		});
@@ -659,13 +661,14 @@ describe("tenant-scoped analysis run repository (Memory)", () => {
 			analysisRunId: run2.id,
 			maxAttempts: 2,
 		});
+		expect(retried2.status).toBe("accepted");
 		expect(retried2.attempts).toBe(2);
 
 		// Fails third time
 		await repos.analysisRuns.transitionStatus({
 			organizationId: "org_a",
 			analysisRunId: run2.id,
-			fromStatus: "queued",
+			fromStatus: ["accepted", "queued"],
 			toStatus: "failed",
 			retryable: true,
 		});
@@ -962,6 +965,33 @@ describe("composite workflows & transaction rollback (Memory)", () => {
 		expect(result.audit.metadata.caseId).toBe("case_a");
 		expect(result.audit.metadata.analysisRunId).toBe(result.run.id);
 		expect(result.audit.metadata.client).toBe("web-ui");
+	});
+
+	it("creates analysis run and audit together in createAnalysisRunWithAudit", async () => {
+		const repos = createMemoryRepositories({
+			cases: [{ id: "case_a", organizationId: "org_a", title: "Case A", createdAt: now, updatedAt: now }],
+		});
+
+		const result = await createAnalysisRunWithAudit(repos, {
+			organizationId: "org_a",
+			caseId: "case_a",
+			run: {
+				idempotencyKey: "idem_run_test",
+				status: "accepted",
+			},
+			audit: {
+				actorUserId: "user_inv_1",
+				action: "analysis.custom_start",
+				metadata: { trigger: "manual" },
+			},
+		});
+
+		expect(result.run.id).toBeDefined();
+		expect(result.run.status).toBe("accepted");
+		expect(result.run.idempotencyKey).toBe("idem_run_test");
+		expect(result.audit.action).toBe("analysis.custom_start");
+		expect(result.audit.resourceId).toBe(result.run.id);
+		expect(result.audit.metadata.trigger).toBe("manual");
 	});
 });
 

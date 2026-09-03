@@ -1,7 +1,9 @@
 import {
 	type CaseShell,
+	type EvidenceShell,
 	MemoryAuditRepository,
 	MemoryCaseRepository,
+	MemoryRepositories,
 } from "@mailsentinel/db";
 import { createRouterClient } from "@orpc/server";
 import { describe, expect, it, vi } from "vitest";
@@ -221,5 +223,97 @@ describe("application router", () => {
 		expect(single?.id).toBe(pending.id);
 		expect(single).not.toHaveProperty("objectKey");
 		expect(single).not.toHaveProperty("idempotencyKey");
+	});
+
+	it("integrates analysis router procedures in appRouter", async () => {
+		const { MemoryAnalyzerClient } = await import("@/server/analyzer-client");
+
+		const testEvidence: EvidenceShell = {
+			id: "ev_01",
+			organizationId: "org_01",
+			caseId: "case_01",
+			objectKey: "organizations/org_01/cases/case_01/artifacts/art_01.eml",
+			sha256:
+				"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			byteSize: 1024,
+			contentType: "message/rfc822",
+			status: "verified",
+			idempotencyKey: null,
+			storedAt: new Date(),
+			verifiedAt: new Date(),
+			failedAt: null,
+			failureReason: null,
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		};
+
+		const memoryRepos = new MemoryRepositories({
+			cases: [testCase],
+			evidence: [testEvidence],
+		});
+		const analyzerClient = new MemoryAnalyzerClient();
+
+		const invContext: RpcContext = {
+			requestId: "req_inv_analysis",
+			userId: "user_investigator",
+			organizationId: "org_01",
+			role: "investigator",
+			repos: {
+				cases: memoryRepos.cases,
+				evidence: memoryRepos.evidence,
+				analysisRuns: memoryRepos.analysisRuns,
+				audit: memoryRepos.audit,
+			},
+			analyzerClient,
+			executeTx: (fn) => memoryRepos.transaction(fn),
+		};
+
+		const invClient = createRouterClient(router, { context: invContext });
+
+		const started = await invClient.analysis.start({
+			caseId: "case_01",
+			evidenceId: "ev_01",
+		});
+
+		expect(started.id).toBeDefined();
+		expect(started.status).toBe("queued");
+		expect(started).not.toHaveProperty("objectKey");
+		expect(started).not.toHaveProperty("idempotencyKey");
+		expect(analyzerClient.dispatched).toHaveLength(1);
+
+		// Fail the run to test retry
+		await memoryRepos.analysisRuns.transitionStatus({
+			organizationId: "org_01",
+			analysisRunId: started.id,
+			fromStatus: "queued",
+			toStatus: "failed",
+			retryable: true,
+			failureCode: "analyzer_unavailable",
+		});
+
+		const ownerContext: RpcContext = {
+			requestId: "req_owner_retry",
+			userId: "user_owner",
+			organizationId: "org_01",
+			role: "owner",
+			repos: {
+				cases: memoryRepos.cases,
+				evidence: memoryRepos.evidence,
+				analysisRuns: memoryRepos.analysisRuns,
+				audit: memoryRepos.audit,
+			},
+			analyzerClient,
+			executeTx: (fn) => memoryRepos.transaction(fn),
+		};
+
+		const ownerClient = createRouterClient(router, { context: ownerContext });
+		const retried = await ownerClient.analysis.retry({
+			analysisRunId: started.id,
+		});
+
+		expect(retried.id).toBe(started.id);
+		expect(retried.status).toBe("queued");
+		expect(retried.attempts).toBe(1);
+		expect(analyzerClient.dispatched).toHaveLength(2);
 	});
 });

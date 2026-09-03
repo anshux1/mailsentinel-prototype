@@ -6,6 +6,7 @@ import {
 	type Repositories,
 } from "@mailsentinel/db";
 import { and, eq } from "drizzle-orm";
+import type { AnalyzerClient } from "@/server/analyzer-client";
 import { auth } from "@/server/auth";
 import type { MembershipRole } from "@/server/auth/permissions";
 import { db } from "@/server/db";
@@ -28,6 +29,10 @@ export type RpcRepositories = Partial<Repositories> & {
 	memberships?: MembershipRepository;
 };
 
+export type TransactionExecutor = <T>(
+	fn: (repos: Repositories) => Promise<T>,
+) => Promise<T>;
+
 export type RpcContext = {
 	requestId: string;
 	userId: string | null;
@@ -38,6 +43,8 @@ export type RpcContext = {
 	membershipError?: MembershipErrorType | null;
 	repos?: RpcRepositories;
 	storage?: EvidenceStorage;
+	analyzerClient?: AnalyzerClient;
+	executeTx?: TransactionExecutor;
 };
 
 export type AuthClientLike = {
@@ -94,6 +101,8 @@ export async function createRpcContext(
 		dbClient?: typeof db;
 		repos?: RpcRepositories;
 		storage?: EvidenceStorage;
+		analyzerClient?: AnalyzerClient;
+		executeTx?: TransactionExecutor;
 	},
 ): Promise<RpcContext> {
 	const requestId =
@@ -112,6 +121,8 @@ export async function createRpcContext(
 			user: null,
 			repos: dependencies?.repos,
 			storage: dependencies?.storage,
+			analyzerClient: dependencies?.analyzerClient,
+			executeTx: dependencies?.executeTx,
 		};
 	}
 
@@ -143,6 +154,8 @@ export async function createRpcContext(
 			membershipError,
 			repos: dependencies?.repos,
 			storage: dependencies?.storage,
+			analyzerClient: dependencies?.analyzerClient,
+			executeTx: dependencies?.executeTx,
 		};
 	}
 
@@ -198,6 +211,8 @@ export async function createRpcContext(
 			membershipError: "not_member",
 			repos: dependencies?.repos,
 			storage: dependencies?.storage,
+			analyzerClient: dependencies?.analyzerClient,
+			executeTx: dependencies?.executeTx,
 		};
 	}
 
@@ -211,5 +226,7 @@ export async function createRpcContext(
 		membershipError: null,
 		repos: dependencies?.repos,
 		storage: dependencies?.storage,
+		analyzerClient: dependencies?.analyzerClient,
+		executeTx: dependencies?.executeTx,
 	};
 }

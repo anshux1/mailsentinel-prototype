@@ -213,6 +213,7 @@ export interface TransitionAnalysisStatusInput extends TenantContext {
 	startedAt?: Date;
 	completedAt?: Date;
 	failedAt?: Date;
+	queuedAt?: Date;
 }
 
 export interface SaveAnalysisResultInput extends TenantContext {
@@ -887,6 +888,11 @@ export class DrizzleAnalysisRunRepository implements AnalysisRunRepository {
 			if (input.startedAt !== undefined) setPayload.startedAt = input.startedAt;
 			if (input.completedAt !== undefined) setPayload.completedAt = input.completedAt;
 			if (input.failedAt !== undefined) setPayload.failedAt = input.failedAt;
+			if (input.queuedAt !== undefined) {
+				setPayload.queuedAt = input.queuedAt;
+			} else if (input.toStatus === "queued") {
+				setPayload.queuedAt = new Date();
+			}
 
 			const [updated] = await this.db
 				.update(schema.analysisRuns)
@@ -1015,7 +1021,7 @@ export class DrizzleAnalysisRunRepository implements AnalysisRunRepository {
 				throw new InvalidStateError(
 					`Cannot retry analysis run '${input.analysisRunId}' with status '${existing.status}'; only 'failed' or 'deferred' runs can be retried`,
 					existing.status,
-					"queued",
+					"accepted",
 				);
 			}
 
@@ -1033,14 +1039,14 @@ export class DrizzleAnalysisRunRepository implements AnalysisRunRepository {
 			const [updated] = await this.db
 				.update(schema.analysisRuns)
 				.set({
-					status: "queued",
+					status: "accepted",
 					attempts: existing.attempts + 1,
 					failureCode: null,
 					failureMessage: null,
 					failedAt: null,
-					queuedAt: new Date(),
-					phase: "queued",
-					progress: 0,
+					queuedAt: null,
+					phase: null,
+					progress: null,
 					updatedAt: new Date(),
 				})
 				.where(
@@ -1685,6 +1691,11 @@ export class MemoryAnalysisRunRepository implements AnalysisRunRepository {
 		if (input.startedAt !== undefined) existing.startedAt = input.startedAt;
 		if (input.completedAt !== undefined) existing.completedAt = input.completedAt;
 		if (input.failedAt !== undefined) existing.failedAt = input.failedAt;
+		if (input.queuedAt !== undefined) {
+			existing.queuedAt = input.queuedAt;
+		} else if (input.toStatus === "queued" && !existing.queuedAt) {
+			existing.queuedAt = new Date();
+		}
 		existing.updatedAt = new Date();
 
 		return { ...existing };
@@ -1745,7 +1756,7 @@ export class MemoryAnalysisRunRepository implements AnalysisRunRepository {
 			throw new InvalidStateError(
 				`Cannot retry analysis run '${input.analysisRunId}' with status '${existing.status}'; only 'failed' or 'deferred' runs can be retried`,
 				existing.status,
-				"queued",
+				"accepted",
 			);
 		}
 
@@ -1760,14 +1771,14 @@ export class MemoryAnalysisRunRepository implements AnalysisRunRepository {
 			);
 		}
 
-		existing.status = "queued";
+		existing.status = "accepted";
 		existing.attempts += 1;
 		existing.failureCode = null;
 		existing.failureMessage = null;
 		existing.failedAt = null;
-		existing.queuedAt = new Date();
-		existing.phase = "queued";
-		existing.progress = 0;
+		existing.queuedAt = null;
+		existing.phase = null;
+		existing.progress = null;
 		existing.updatedAt = new Date();
 
 		return { ...existing };
@@ -2180,6 +2191,7 @@ export interface CreateAnalysisRunWithAuditInput extends TenantCaseKey {
 	};
 	audit?: {
 		actorUserId?: string | null;
+		action?: string;
 		metadata?: Record<string, string>;
 	};
 }
@@ -2203,7 +2215,7 @@ export async function createAnalysisRunWithAudit(
 
 	const audit = await repos.audit.appendAuditRecord({
 		organizationId: input.organizationId,
-		action: "analysis.created",
+		action: input.audit?.action ?? "analysis.created",
 		resourceType: "analysis_run",
 		resourceId: run.id,
 		actorUserId: input.audit?.actorUserId,
