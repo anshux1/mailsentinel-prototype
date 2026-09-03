@@ -1,80 +1,240 @@
 name: mailsentinel
 
 x-analyzer-environment: &analyzer-environment
-  APP_ENV: development
-  DATABASE_URL: postgresql://mailsentinel:mailsentinel@postgres:5432/mailsentinel
-  REDIS_URL: redis://redis:6379/0
-  S3_ENDPOINT: http://minio:9000
-  S3_REGION: us-east-1
-  S3_BUCKET: mailsentinel-evidence
-  S3_ACCESS_KEY_ID: mailsentinel
-  S3_SECRET_ACCESS_KEY: mailsentinel-local-secret
-  S3_FORCE_PATH_STYLE: "true"
-  ANALYZER_SERVICE_TOKEN: local-development-token-change-me
-  ENRICHMENT_MODE: fixture
+  APP_ENV: ${APP_ENV:-development}
+  DATABASE_URL: ${CONTAINER_DATABASE_URL:-postgresql://${POSTGRES_USER:-mailsentinel}:${POSTGRES_PASSWORD:-mailsentinel}@postgres:5432/${POSTGRES_DB:-mailsentinel}}
+  REDIS_URL: ${CONTAINER_REDIS_URL:-redis://redis:6379/0}
+  S3_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://minio:9000}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-mailsentinel-evidence}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-mailsentinel}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-mailsentinel-local-secret}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+  ANALYZER_SERVICE_TOKEN: ${ANALYZER_SERVICE_TOKEN:-local-development-token-change-me}
+  ENRICHMENT_MODE: ${ENRICHMENT_MODE:-fixture}
+  MAX_EML_BYTES: ${MAX_EML_BYTES:-26214400}
+  MAX_CONTAINER_BYTES: ${MAX_CONTAINER_BYTES:-104857600}
+  MAX_MIME_PARTS: ${MAX_MIME_PARTS:-200}
+  MAX_MIME_DEPTH: ${MAX_MIME_DEPTH:-30}
+  MAX_HEADER_COUNT: ${MAX_HEADER_COUNT:-1000}
+  MAX_URLS: ${MAX_URLS:-500}
+  MAX_ATTACHMENT_BYTES: ${MAX_ATTACHMENT_BYTES:-10485760}
+  EXECUTION_TIMEOUT_SECONDS: ${EXECUTION_TIMEOUT_SECONDS:-120}
+  ENRICHMENT_MAX_REQUESTS: ${ENRICHMENT_MAX_REQUESTS:-10}
+  ENRICHMENT_CACHE_TTL_SECONDS: ${ENRICHMENT_CACHE_TTL_SECONDS:-86400}
+  ENRICHMENT_LIVE_CACHE_TTL_SECONDS: ${ENRICHMENT_LIVE_CACHE_TTL_SECONDS:-3600}
+  ENRICHMENT_CONNECT_TIMEOUT_SECONDS: ${ENRICHMENT_CONNECT_TIMEOUT_SECONDS:-2}
+  ENRICHMENT_READ_TIMEOUT_SECONDS: ${ENRICHMENT_READ_TIMEOUT_SECONDS:-3}
+  MAXMIND_DB_PATH: ${MAXMIND_DB_PATH:-}
+  OFFLINE_REPUTATION_PATH: ${OFFLINE_REPUTATION_PATH:-}
+  ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY:-}
+  ANALYSIS_VERSION: ${ANALYSIS_VERSION:-prototype-1}
+  RETENTION_DAYS: ${RETENTION_DAYS:-90}
+  MAX_CONTAINER_MESSAGES: ${MAX_CONTAINER_MESSAGES:-500}
+  MAX_NESTED_MESSAGE_DEPTH: ${MAX_NESTED_MESSAGE_DEPTH:-3}
+  MAX_NESTED_MESSAGES: ${MAX_NESTED_MESSAGES:-10}
+
+x-web-environment: &web-environment
+  APP_ENV: ${APP_ENV:-development}
+  DATABASE_URL: ${CONTAINER_DATABASE_URL:-postgresql://${POSTGRES_USER:-mailsentinel}:${POSTGRES_PASSWORD:-mailsentinel}@postgres:5432/${POSTGRES_DB:-mailsentinel}}
+  BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-local-development-auth-secret-change-me}
+  BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+  ANALYZER_INTERNAL_URL: ${CONTAINER_ANALYZER_URL:-http://analyzer:8000}
+  ANALYZER_SERVICE_TOKEN: ${ANALYZER_SERVICE_TOKEN:-local-development-token-change-me}
+  S3_ENDPOINT: ${S3_INTERNAL_ENDPOINT:-http://minio:9000}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_BUCKET: ${S3_BUCKET:-mailsentinel-evidence}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-mailsentinel}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-mailsentinel-local-secret}
+  S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+  MAX_EML_BYTES: ${MAX_EML_BYTES:-26214400}
+  MAX_CONTAINER_BYTES: ${MAX_CONTAINER_BYTES:-104857600}
+  WEB_DATA_MODE: ${WEB_DATA_MODE:-fixture}
+  MAILBOX_CONNECTORS_ENABLED: ${MAILBOX_CONNECTORS_ENABLED:-false}
+  MAILBOX_TOKEN_ENCRYPTION_KEY: ${MAILBOX_TOKEN_ENCRYPTION_KEY:-replace-with-at-least-32-characters-for-mailbox-crypto}
+  MAILBOX_SYNC_MAX_MESSAGES: ${MAILBOX_SYNC_MAX_MESSAGES:-200}
+  GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+  GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+  GMAIL_CLIENT_ID: ${GMAIL_CLIENT_ID:-}
+  GMAIL_CLIENT_SECRET: ${GMAIL_CLIENT_SECRET:-}
+  GMAIL_REDIRECT_URI: ${GMAIL_REDIRECT_URI:-http://localhost:3000/api/mailbox/gmail/callback}
 
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: mailsentinel
-      POSTGRES_PASSWORD: mailsentinel
-      POSTGRES_DB: mailsentinel
-    ports: ["127.0.0.1:5432:5432"]
-    volumes: ["postgres-data:/var/lib/postgresql/data"]
+      POSTGRES_USER: ${POSTGRES_USER:-mailsentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailsentinel}
+      POSTGRES_DB: ${POSTGRES_DB:-mailsentinel}
+    ports:
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mailsentinel -d mailsentinel"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mailsentinel} -d ${POSTGRES_DB:-mailsentinel}"]
       interval: 5s
       timeout: 5s
       retries: 10
+
   redis:
     image: redis:7-alpine
-    ports: ["127.0.0.1:6379:6379"]
+    restart: unless-stopped
+    ports:
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
+
   minio:
     image: minio/minio:RELEASE.2025-07-18T21-56-31Z
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: mailsentinel
-      MINIO_ROOT_PASSWORD: mailsentinel-local-secret
-    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
-    volumes: ["minio-data:/data"]
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-mailsentinel}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-mailsentinel-local-secret}
+    ports:
+      - "${MINIO_BIND:-127.0.0.1}:${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_BIND:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
       timeout: 5s
       retries: 10
+
   minio-init:
     image: minio/mc:RELEASE.2025-07-21T05-28-08Z
     depends_on:
-      minio: {condition: service_healthy}
+      minio:
+        condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
-    command: ["mc alias set local http://minio:9000 mailsentinel mailsentinel-local-secret && mc mb --ignore-existing local/mailsentinel-evidence && mc anonymous set none local/mailsentinel-evidence"]
+    command:
+      - >-
+        mc alias set local http://minio:9000 "${S3_ACCESS_KEY_ID:-mailsentinel}" "${S3_SECRET_ACCESS_KEY:-mailsentinel-local-secret}" &&
+        mc mb --ignore-existing "local/${S3_BUCKET:-mailsentinel-evidence}" &&
+        mc anonymous set none "local/${S3_BUCKET:-mailsentinel-evidence}"
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      target: migrator
+    command: ["pnpm", "db:migrate"]
+    environment:
+      DATABASE_URL: ${CONTAINER_DATABASE_URL:-postgresql://${POSTGRES_USER:-mailsentinel}:${POSTGRES_PASSWORD:-mailsentinel}@postgres:5432/${POSTGRES_DB:-mailsentinel}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   analyzer:
     build: ../apps/analyzer
+    restart: unless-stopped
     environment: *analyzer-environment
     depends_on:
-      postgres: {condition: service_healthy}
-      redis: {condition: service_healthy}
-      minio: {condition: service_healthy}
-      minio-init: {condition: service_completed_successfully}
-    expose: ["8000"]
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
       interval: 5s
       timeout: 5s
       retries: 10
+
   worker:
     build: ../apps/analyzer
+    restart: unless-stopped
     command: ["uv", "run", "dramatiq", "app.tasks.broker"]
     environment: *analyzer-environment
     depends_on:
-      redis: {condition: service_healthy}
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      target: runner
+    restart: unless-stopped
+    environment: *web-environment
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+      analyzer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/rpc/system/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      start_period: 15s
+      retries: 10
+
+  seed:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      target: migrator
+    command: ["pnpm", "db:seed"]
+    environment:
+      DATABASE_URL: ${CONTAINER_DATABASE_URL:-postgresql://${POSTGRES_USER:-mailsentinel}:${POSTGRES_PASSWORD:-mailsentinel}@postgres:5432/${POSTGRES_DB:-mailsentinel}}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-local-development-auth-secret-change-me}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-demo@mailsentinel.local}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-MailSentinel-Demo-2026!}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    profiles:
+      - seed
+
+  cloudflare-tunnel:
+    image: cloudflare/cloudflared:2025.2.1
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      web:
+        condition: service_healthy
+    profiles:
+      - tunnel
+      - cloudflare-tunnel
 
 volumes:
   postgres-data:
+  redis-data:
   minio-data:

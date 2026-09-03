@@ -7,16 +7,18 @@ Git 2.40+, Node 22 LTS, pnpm 9, Python 3.12 through uv, and Docker Compose. Anal
 ## First start
 
 ```bash
+# 1. Install dependencies:
 pnpm install --frozen-lockfile
 uv sync --locked
 cd apps/analyzer && uv sync --locked && cd ../..
 cp apps/web/.env.example apps/web/.env
 cp apps/analyzer/.env.example apps/analyzer/.env
+
+# 2. Start the full Compose stack (boots backing services, migrates, seeds, and launches web):
 pnpm infra:start
-pnpm dev
 ```
 
-`infra:start` builds and waits for PostgreSQL, Redis, private MinIO, FastAPI and the Dramatiq worker, then migrates and seeds the demo identity. Web runs at `http://localhost:3000`. MinIO console is local-only at `http://localhost:9001`. FastAPI is intentionally not host-published.
+`infra:start` builds and starts PostgreSQL, Redis, private MinIO, migrations, FastAPI analyzer, Dramatiq worker, and the Next.js web application. Once started, the web interface is accessible at `http://localhost:3000`. (If you prefer running the Next.js dev server on the host with `pnpm dev`, stop the containerized web service with `docker compose -f infra/compose.yaml stop web` first.) MinIO console is local-only at `http://localhost:9001`. FastAPI is intentionally not host-published.
 
 Demo credentials default to:
 

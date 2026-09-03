@@ -49,25 +49,20 @@ analyzer, Redis, or object storage.
 ### Already in the repository
 
 - `apps/analyzer/Dockerfile` — uv on Python 3.12 slim, runs uvicorn.
-- `infra/compose.yaml` — PostgreSQL, Redis, MinIO, a MinIO bucket initialiser,
-  the analyzer, and the worker.
-- `infra/scripts/` — `start.sh`, `stop.sh`, `wait.sh`, `reset.sh`, `migrate.sh`,
-  `seed.sh`, `bucket.sh`, `fixtures.sh`.
-- CI (`.github/workflows/ci.yml`) that builds and Trivy-scans the analyzer image
-  and runs a Compose smoke test of the private stack.
+- `apps/web/Dockerfile` — multi-stage Node 22 build with standalone output, migrator target, and unprivileged runner.
+- `apps/web/next.config.ts` — configured with `output: "standalone"` for lean container builds.
+- `infra/compose.yaml` — complete local stack running web, analyzer, worker, PostgreSQL, Redis, MinIO, bucket initialization, migrations, and optional Cloudflare Tunnel.
+- `infra/scripts/` — `start.sh`, `stop.sh`, `wait.sh`, `reset.sh`, `migrate.sh`, `seed.sh`, `bucket.sh`, `fixtures.sh`.
+- `docs/LOCAL_DOCKER_INTERNET.md` — complete guide for local Docker Compose and Cloudflare Tunnel internet exposure.
+- CI (`.github/workflows/ci.yml`) that builds and Trivy-scans the analyzer image and runs a Compose smoke test of the private stack.
 
-### Missing — you must supply these
+### Production hardening gaps to consider for cloud deployments
 
-| Gap | Why it matters | Effort |
-| --- | --- | --- |
-| **No Dockerfile for `web`** | `infra/compose.yaml` has no `web` service at all. The Next.js app is only ever run via `pnpm dev` or `next start` on a host. | Small |
-| **No `output: "standalone"`** in `apps/web/next.config.ts` | Without it a web container image must carry the entire monorepo `node_modules`. Standalone output produces a lean self-contained bundle. | One line |
-| **Compose is development-only** | Credentials are hardcoded in the file, every port binds to `127.0.0.1`, `APP_ENV` is `development`, and `ENRICHMENT_MODE` is `fixture`. It is a local harness, not a deployment artifact. | Medium |
-| **No TLS termination or reverse proxy** | `BETTER_AUTH_URL` must be `https://` in production; session cookies depend on it. | Small |
-| **No migration step in any deploy path** | `pnpm db:migrate` exists but nothing invokes it on deploy. Starting `web` against an unmigrated database fails at first query. | Small |
-| **No backup or restore procedure** | PostgreSQL holds the case record; object storage holds the evidence. Losing either breaks chain of custody. | Medium |
-
-Nothing here is difficult — but none of it is done, so budget for it.
+| Area | Why it matters |
+| --- | --- |
+| **External TLS & reverse proxy** | In production, `BETTER_AUTH_URL` must be `https://`; session cookies require it. Cloudflare Tunnel or a reverse proxy (Caddy/Nginx) handles TLS termination. |
+| **Platform secret management** | Inject secrets via platform environment variables or KMS rather than static files. |
+| **Backup and restore procedure** | PostgreSQL holds the case record; object storage holds the evidence. Losing either breaks chain of custody. |
 
 ---
 
@@ -250,7 +245,24 @@ silently degrading.
 
 ## 7. Deployment sequence
 
-Order matters. Steps 3 and 4 are the ones most often skipped.
+Depending on whether you are running a complete containerized stack (via Docker Compose) or deploying processes individually across container / server environments:
+
+### 7.1 Containerized Compose Deployment (Recommended)
+
+Docker Compose manages boot ordering, bucket initialization, migrations, and seeding automatically:
+
+```bash
+# Start all services (postgres, redis, minio, minio-init, migrate, analyzer, worker, web) and seed:
+pnpm infra:start
+
+# Or using docker compose commands directly:
+docker compose -f infra/compose.yaml up -d --build --wait postgres redis minio analyzer worker web
+docker compose -f infra/compose.yaml run --rm seed
+```
+
+### 7.2 Manual / Multi-Host Deployment Sequence
+
+When running the Next.js web application directly on a Node 22 host or separate platform while backing services and analyzer run in containers:
 
 ```bash
 # 1. Bring up backing services and wait for health
@@ -268,7 +280,7 @@ pnpm db:seed
 # 5. Start the private analysis stack
 docker compose -f infra/compose.yaml up -d --wait analyzer worker
 
-# 6. Build and start the web application server
+# 6. Build and start the host web application server
 pnpm build
 pnpm --filter @mailsentinel/web start
 ```
@@ -347,7 +359,8 @@ versioned object.
 
 | Task | Command |
 | --- | --- |
-| Start backing services | `pnpm infra:start` |
+| Start full Compose stack (with web) | `pnpm infra:start` |
+| Start backing & analyzer services only | `docker compose -f infra/compose.yaml up -d --wait postgres redis minio analyzer worker` |
 | Wait for health | `pnpm infra:wait` |
 | Reset all local state | `pnpm infra:reset` |
 | Stop everything | `pnpm infra:stop` |

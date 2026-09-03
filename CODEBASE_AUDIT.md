@@ -125,7 +125,4 @@ The post-audit hardening pass implemented and tested: fail-closed analyzer intak
 
 ## Plan cleanup performed
 
-- `PLAN.md`: completed implementation details removed; now points to the active consolidated plan.
-- `SETUP_PLAN.md`: completed setup checklist removed; Docker work explicitly excluded.
-- `TODO.md`: completed items removed; the former Docker-only pending item excluded.
-- `PLAN_FINAL.md`: rewritten as the sole consolidated plan containing only remaining non-frontend, non-Docker work.
+The obsolete planning artifacts `PLAN.md`, `PLAN_FINAL.md`, `SETUP_PLAN.md`, and `TODO.md` were removed after their completed items were consolidated. Local Docker and internet-access setup is documented in [`docs/LOCAL_DOCKER_INTERNET.md`](docs/LOCAL_DOCKER_INTERNET.md), while this file remains as the historical codebase audit.
