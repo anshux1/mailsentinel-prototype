@@ -9,6 +9,9 @@ os.environ.setdefault("S3_SECRET_ACCESS_KEY", "contract-secret-value")
 os.environ.setdefault("ANALYZER_SERVICE_TOKEN", "contract-service-token")
 os.environ.setdefault("APP_ENV", "test")
 sys.path.insert(0, str(Path(__file__).parents[1]))
+
+from app.contracts.openapi import build_analyzer_openapi  # noqa: E402
 from app.main import app  # noqa: E402
 
-Path("openapi.json").write_text(json.dumps(app.openapi(), indent=2, sort_keys=True) + "\n")
+schema = build_analyzer_openapi(app)
+Path("openapi.json").write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n")

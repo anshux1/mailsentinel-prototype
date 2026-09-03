@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -16,7 +17,8 @@ VALID = {
 
 
 def settings(**overrides: object) -> Settings:
-    return Settings(_env_file=None, **(VALID | overrides))  # type: ignore[call-arg]
+    merged = cast(dict[str, Any], VALID | overrides)
+    return Settings(_env_file=None, **merged)  # type: ignore[call-arg]
 
 
 def test_valid_development_fixture_settings() -> None:
@@ -30,6 +32,8 @@ def test_valid_development_fixture_settings() -> None:
         {"database_url": "not-a-url"},
         {"max_eml_bytes": 0},
         {"enrichment_mode": "invalid"},
+        {"max_urls": 0},
+        {"max_urls": 1001},
     ],
 )
 def test_invalid_settings(overrides: dict[str, object]) -> None:
@@ -37,8 +41,17 @@ def test_invalid_settings(overrides: dict[str, object]) -> None:
         settings(**overrides)
 
 
+def test_max_urls_contract_bounds() -> None:
+    s = settings(max_urls=1000)
+    assert s.max_urls == 1000
+    with pytest.raises(ValidationError, match="max_urls cannot exceed indicator contract limit"):
+        settings(max_urls=1001)
+    with pytest.raises(ValidationError, match="resource limits must be positive"):
+        settings(max_urls=0)
+
+
 def test_missing_core_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    values = VALID.copy()
+    values: dict[str, Any] = VALID.copy()
     values.pop("analyzer_service_token")
     monkeypatch.delenv("ANALYZER_SERVICE_TOKEN")
     with pytest.raises(ValidationError):

@@ -8,5 +8,59 @@
 	},
 	"AnalysisIntakeAccepted": { "analysisRunId": 42, "status": "complete" },
 	"AnalysisStatus": { "analysisRunId": null, "status": "unknown" },
-	"AnalysisFailure": { "code": 500, "message": null }
+	"AnalysisFailure": { "code": "unknown_failure_code", "message": null },
+	"Artifact": { "objectKey": "invalid/key", "sha256": "short", "byteSize": -1 },
+	"AddressObservation": { "value": "", "source": "" },
+	"HeaderObservation": { "name": "", "value": "x", "occurrence": 0 },
+	"ReceivedHop": { "position": 0 },
+	"AuthenticationObservation": { "method": "", "result": "" },
+	"MimePartObservation": { "partId": "", "contentType": "", "byteSize": -5 },
+	"IndicatorObservation": { "kind": "", "value": "", "normalizedValue": "", "source": "" },
+	"EnrichmentDetails": { "rawScore": 99999 },
+	"EnrichmentObservation": { "indicator": "", "provider": "", "mode": "", "score": 200 },
+	"IdentityObservation": { "source": "", "displayName": "", "address": "", "claimedIdentity": "", "inconsistencyType": "", "explanation": "" },
+	"DateObservation": { "parsedDate": "not-a-date" },
+	"MessageIdObservation": { "domain": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+	"ContentIndicatorObservation": { "category": "", "matchedPhrase": "", "snippet": "", "source": "" },
+	"LinkMismatchObservation": { "displayText": "", "displayDomain": "", "actualHref": "", "actualDomain": "", "explanation": "" },
+	"RoutingAnomalyObservation": { "anomalyType": "", "explanation": "" },
+	"AuthConflictObservation": { "method": "", "explanation": "" },
+	"Finding": {
+		"ruleId": "r1",
+		"category": "headers",
+		"severity": "low",
+		"scoreContribution": 20,
+		"explanation": "e",
+		"source": "s",
+		"evidenceRefs": []
+	},
+	"ScoreBreakdown": {
+		"baseScore": 0,
+		"contributions": [
+			{
+				"ruleId": "r1",
+				"category": "headers",
+				"severity": "low",
+				"scoreContribution": 10,
+				"explanation": "e",
+				"source": "s",
+				"evidenceRefs": ["s"]
+			}
+		],
+		"finalScore": 99
+	},
+	"AnalysisResult": {
+		"schemaVersion": "1.0.0",
+		"rulesetVersion": "1.0.0",
+		"analysisVersion": "prototype-1",
+		"analysisRunId": "run_01",
+		"organizationId": "org_01",
+		"caseId": "case_01",
+		"artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"artifactByteSize": 100,
+		"score": { "baseScore": 0, "contributions": [], "finalScore": 90 },
+		"verdict": "benign",
+		"confidence": 0.5,
+		"analyzedAt": "2026-01-01T00:00:00Z"
+	}
 }

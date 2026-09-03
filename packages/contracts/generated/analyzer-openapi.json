@@ -1,9 +1,132 @@
 {
   "components": {
     "schemas": {
+      "AddressObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Address"
+          },
+          "displayName": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Displayname"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Domain"
+          },
+          "source": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 320,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "source"
+        ],
+        "title": "AddressObservation",
+        "type": "object"
+      },
+      "AnalysisFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/AnalysisFailureCode"
+          },
+          "message": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "requestId": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requestid"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "AnalysisFailure",
+        "type": "object"
+      },
+      "AnalysisFailureCode": {
+        "enum": [
+          "intake_invalid",
+          "evidence_not_found",
+          "evidence_too_large",
+          "evidence_digest_mismatch",
+          "evidence_size_mismatch",
+          "evidence_storage_unavailable",
+          "message_invalid",
+          "header_limit_exceeded",
+          "mime_limit_exceeded",
+          "attachment_limit_exceeded",
+          "analysis_run_not_found",
+          "analysis_failed",
+          "internal_error"
+        ],
+        "title": "AnalysisFailureCode",
+        "type": "string"
+      },
       "AnalysisIntakeAccepted": {
+        "additionalProperties": false,
         "properties": {
           "analysisRunId": {
+            "maxLength": 160,
+            "minLength": 1,
             "title": "Analysisrunid",
             "type": "string"
           },
@@ -19,11 +142,13 @@
         "type": "object"
       },
       "AnalysisIntakeRequest": {
+        "additionalProperties": false,
         "examples": [
           {
             "analysisRunId": "run_01",
             "artifact": {
               "byteSize": 24831,
+              "digestAlgorithm": "sha256",
               "objectKey": "organizations/org_01/cases/case_01/artifacts/artifact_01.eml",
               "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             },
@@ -34,7 +159,9 @@
         ],
         "properties": {
           "analysisRunId": {
+            "maxLength": 160,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
             "title": "Analysisrunid",
             "type": "string"
           },
@@ -42,12 +169,16 @@
             "$ref": "#/components/schemas/Artifact"
           },
           "caseId": {
+            "maxLength": 160,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
             "title": "Caseid",
             "type": "string"
           },
           "organizationId": {
+            "maxLength": 160,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]+$",
             "title": "Organizationid",
             "type": "string"
           },
@@ -67,10 +198,301 @@
         "title": "AnalysisIntakeRequest",
         "type": "object"
       },
+      "AnalysisPhase": {
+        "enum": [
+          "queued",
+          "fetching_evidence",
+          "parsing",
+          "extracting",
+          "enriching",
+          "scoring",
+          "completed",
+          "failed"
+        ],
+        "title": "AnalysisPhase",
+        "type": "string"
+      },
+      "AnalysisResult": {
+        "additionalProperties": false,
+        "properties": {
+          "addresses": {
+            "items": {
+              "$ref": "#/components/schemas/AddressObservation"
+            },
+            "maxItems": 100,
+            "title": "Addresses",
+            "type": "array"
+          },
+          "analysisRunId": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Analysisrunid",
+            "type": "string"
+          },
+          "analysisVersion": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Analysisversion",
+            "type": "string"
+          },
+          "analyzedAt": {
+            "format": "date-time",
+            "title": "Analyzedat",
+            "type": "string"
+          },
+          "artifactByteSize": {
+            "exclusiveMinimum": 0,
+            "maximum": 50000000,
+            "title": "Artifactbytesize",
+            "type": "integer"
+          },
+          "artifactDigestAlgorithm": {
+            "$ref": "#/components/schemas/DigestAlgorithm",
+            "default": "sha256"
+          },
+          "artifactSha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Artifactsha256",
+            "type": "string"
+          },
+          "authConflicts": {
+            "items": {
+              "$ref": "#/components/schemas/AuthConflictObservation"
+            },
+            "maxItems": 100,
+            "title": "Authconflicts",
+            "type": "array"
+          },
+          "authentication": {
+            "items": {
+              "$ref": "#/components/schemas/AuthenticationObservation"
+            },
+            "maxItems": 100,
+            "title": "Authentication",
+            "type": "array"
+          },
+          "caseId": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Caseid",
+            "type": "string"
+          },
+          "confidence": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Confidence",
+            "type": "number"
+          },
+          "contentIndicators": {
+            "items": {
+              "$ref": "#/components/schemas/ContentIndicatorObservation"
+            },
+            "maxItems": 1000,
+            "title": "Contentindicators",
+            "type": "array"
+          },
+          "dateObservations": {
+            "items": {
+              "$ref": "#/components/schemas/DateObservation"
+            },
+            "maxItems": 1000,
+            "title": "Dateobservations",
+            "type": "array"
+          },
+          "enrichment": {
+            "items": {
+              "$ref": "#/components/schemas/EnrichmentObservation"
+            },
+            "maxItems": 1000,
+            "title": "Enrichment",
+            "type": "array"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "maxItems": 500,
+            "title": "Findings",
+            "type": "array"
+          },
+          "headers": {
+            "items": {
+              "$ref": "#/components/schemas/HeaderObservation"
+            },
+            "maxItems": 1000,
+            "title": "Headers",
+            "type": "array"
+          },
+          "identityObservations": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityObservation"
+            },
+            "maxItems": 100,
+            "title": "Identityobservations",
+            "type": "array"
+          },
+          "indicators": {
+            "items": {
+              "$ref": "#/components/schemas/IndicatorObservation"
+            },
+            "maxItems": 1000,
+            "title": "Indicators",
+            "type": "array"
+          },
+          "linkMismatches": {
+            "items": {
+              "$ref": "#/components/schemas/LinkMismatchObservation"
+            },
+            "maxItems": 1000,
+            "title": "Linkmismatches",
+            "type": "array"
+          },
+          "messageIdObservations": {
+            "items": {
+              "$ref": "#/components/schemas/MessageIdObservation"
+            },
+            "maxItems": 1000,
+            "title": "Messageidobservations",
+            "type": "array"
+          },
+          "mimeParts": {
+            "items": {
+              "$ref": "#/components/schemas/MimePartObservation"
+            },
+            "maxItems": 200,
+            "title": "Mimeparts",
+            "type": "array"
+          },
+          "organizationId": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Organizationid",
+            "type": "string"
+          },
+          "parserWarnings": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Parserwarnings",
+            "type": "array"
+          },
+          "receivedHops": {
+            "items": {
+              "$ref": "#/components/schemas/ReceivedHop"
+            },
+            "maxItems": 200,
+            "title": "Receivedhops",
+            "type": "array"
+          },
+          "routingAnomalies": {
+            "items": {
+              "$ref": "#/components/schemas/RoutingAnomalyObservation"
+            },
+            "maxItems": 200,
+            "title": "Routinganomalies",
+            "type": "array"
+          },
+          "rulesetVersion": {
+            "default": "1.0.0",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Rulesetversion",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "default": "1.0.0",
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Schemaversion",
+            "type": "string"
+          },
+          "score": {
+            "$ref": "#/components/schemas/ScoreBreakdown"
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/VerdictValue"
+          }
+        },
+        "required": [
+          "analysisVersion",
+          "analysisRunId",
+          "organizationId",
+          "caseId",
+          "artifactSha256",
+          "artifactByteSize",
+          "score",
+          "verdict",
+          "confidence",
+          "analyzedAt"
+        ],
+        "title": "AnalysisResult",
+        "type": "object"
+      },
+      "AnalysisStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "analysisRunId": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Analysisrunid",
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisFailure"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisPhase"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Progress"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AnalysisStatusValue"
+          }
+        },
+        "required": [
+          "analysisRunId",
+          "status"
+        ],
+        "title": "AnalysisStatus",
+        "type": "object"
+      },
       "AnalysisStatusValue": {
         "enum": [
           "accepted",
           "queued",
+          "processing",
+          "completed",
           "deferred",
           "failed"
         ],
@@ -78,18 +500,28 @@
         "type": "string"
       },
       "Artifact": {
+        "additionalProperties": false,
         "properties": {
           "byteSize": {
             "exclusiveMinimum": 0,
+            "maximum": 50000000,
             "title": "Bytesize",
             "type": "integer"
           },
+          "digestAlgorithm": {
+            "$ref": "#/components/schemas/DigestAlgorithm",
+            "default": "sha256"
+          },
           "objectKey": {
+            "maxLength": 500,
+            "minLength": 1,
             "pattern": "^organizations/[A-Za-z0-9_-]+/cases/[A-Za-z0-9_-]+/artifacts/[A-Za-z0-9_-]+\\.eml$",
             "title": "Objectkey",
             "type": "string"
           },
           "sha256": {
+            "maxLength": 64,
+            "minLength": 64,
             "pattern": "^[0-9a-fA-F]{64}$",
             "title": "Sha256",
             "type": "string"
@@ -103,6 +535,506 @@
         "title": "Artifact",
         "type": "object"
       },
+      "AuthConflictObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "explanation": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "outcomes": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Outcomes",
+            "type": "array"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "method",
+          "explanation"
+        ],
+        "title": "AuthConflictObservation",
+        "type": "object"
+      },
+      "AuthenticationObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Algorithm"
+          },
+          "declaringHost": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Declaringhost"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Domain"
+          },
+          "identity": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Identity"
+          },
+          "independentlyVerified": {
+            "default": false,
+            "title": "Independentlyverified",
+            "type": "boolean"
+          },
+          "method": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "result": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Result",
+            "type": "string"
+          },
+          "selector": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Selector"
+          },
+          "signedHeaders": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Signedheaders",
+            "type": "array"
+          },
+          "signingDomain": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Signingdomain"
+          },
+          "source": {
+            "default": "authentication-results",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "result"
+        ],
+        "title": "AuthenticationObservation",
+        "type": "object"
+      },
+      "ContentIndicatorObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Category",
+            "type": "string"
+          },
+          "matchedPhrase": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Matchedphrase",
+            "type": "string"
+          },
+          "snippet": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Snippet",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "matchedPhrase",
+          "snippet",
+          "source"
+        ],
+        "title": "ContentIndicatorObservation",
+        "type": "object"
+      },
+      "DateObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "anomalies": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Anomalies",
+            "type": "array"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Details"
+          },
+          "isValid": {
+            "default": false,
+            "title": "Isvalid",
+            "type": "boolean"
+          },
+          "parsedDate": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parseddate"
+          },
+          "rawValue": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rawvalue"
+          }
+        },
+        "title": "DateObservation",
+        "type": "object"
+      },
+      "DigestAlgorithm": {
+        "enum": [
+          "sha256",
+          "sha384",
+          "sha512"
+        ],
+        "title": "DigestAlgorithm",
+        "type": "string"
+      },
+      "EnrichmentDetails": {
+        "additionalProperties": false,
+        "properties": {
+          "asn": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Asn"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Category"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "maxLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Country"
+          },
+          "deterministic": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Deterministic"
+          },
+          "dnsRecords": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Dnsrecords",
+            "type": "array"
+          },
+          "rawScore": {
+            "anyOf": [
+              {
+                "maximum": 1000,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rawscore"
+          }
+        },
+        "title": "EnrichmentDetails",
+        "type": "object"
+      },
+      "EnrichmentObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "$ref": "#/components/schemas/EnrichmentDetails"
+          },
+          "indicator": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Indicator",
+            "type": "string"
+          },
+          "mode": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Mode",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          },
+          "reputation": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reputation"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Score"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timestamp"
+          }
+        },
+        "required": [
+          "indicator",
+          "provider",
+          "mode"
+        ],
+        "title": "EnrichmentObservation",
+        "type": "object"
+      },
+      "Finding": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/FindingCategory"
+          },
+          "evidenceRefs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "explanation": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "ruleId": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Ruleid",
+            "type": "string"
+          },
+          "scoreContribution": {
+            "maximum": 100,
+            "minimum": -100,
+            "title": "Scorecontribution",
+            "type": "integer"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/SeverityValue"
+          },
+          "source": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ruleId",
+          "category",
+          "severity",
+          "scoreContribution",
+          "explanation",
+          "source"
+        ],
+        "title": "Finding",
+        "type": "object"
+      },
+      "FindingCategory": {
+        "enum": [
+          "headers",
+          "authentication",
+          "routing",
+          "url",
+          "domain",
+          "ip",
+          "attachment",
+          "content",
+          "parser",
+          "enrichment"
+        ],
+        "title": "FindingCategory",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -115,6 +1047,568 @@
         },
         "title": "HTTPValidationError",
         "type": "object"
+      },
+      "HeaderObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "malformed": {
+            "default": false,
+            "title": "Malformed",
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "occurrence": {
+            "maximum": 10000,
+            "minimum": 1,
+            "title": "Occurrence",
+            "type": "integer"
+          },
+          "value": {
+            "maxLength": 2000,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "occurrence"
+        ],
+        "title": "HeaderObservation",
+        "type": "object"
+      },
+      "IdentityObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "maxLength": 320,
+            "title": "Address",
+            "type": "string"
+          },
+          "claimedIdentity": {
+            "maxLength": 320,
+            "title": "Claimedidentity",
+            "type": "string"
+          },
+          "displayName": {
+            "maxLength": 320,
+            "title": "Displayname",
+            "type": "string"
+          },
+          "explanation": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "inconsistencyType": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Inconsistencytype",
+            "type": "string"
+          },
+          "source": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "displayName",
+          "address",
+          "claimedIdentity",
+          "inconsistencyType",
+          "explanation"
+        ],
+        "title": "IdentityObservation",
+        "type": "object"
+      },
+      "IndicatorObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "maxLength": 30,
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "normalizedValue": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Normalizedvalue",
+            "type": "string"
+          },
+          "privateOrReserved": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Privateorreserved"
+          },
+          "source": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value",
+          "normalizedValue",
+          "source"
+        ],
+        "title": "IndicatorObservation",
+        "type": "object"
+      },
+      "LinkMismatchObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "actualDomain": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Actualdomain",
+            "type": "string"
+          },
+          "actualHref": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Actualhref",
+            "type": "string"
+          },
+          "displayDomain": {
+            "maxLength": 253,
+            "minLength": 1,
+            "title": "Displaydomain",
+            "type": "string"
+          },
+          "displayText": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Displaytext",
+            "type": "string"
+          },
+          "explanation": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "displayText",
+          "displayDomain",
+          "actualHref",
+          "actualDomain",
+          "explanation"
+        ],
+        "title": "LinkMismatchObservation",
+        "type": "object"
+      },
+      "MessageIdObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "alignedWithSender": {
+            "default": false,
+            "title": "Alignedwithsender",
+            "type": "boolean"
+          },
+          "anomalies": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Anomalies",
+            "type": "array"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Details"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Domain"
+          },
+          "isValidSyntax": {
+            "default": false,
+            "title": "Isvalidsyntax",
+            "type": "boolean"
+          },
+          "messageId": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Messageid"
+          },
+          "rawValue": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rawvalue"
+          },
+          "senderDomains": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Senderdomains",
+            "type": "array"
+          }
+        },
+        "title": "MessageIdObservation",
+        "type": "object"
+      },
+      "MimePartObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "byteSize": {
+            "maximum": 100000000,
+            "minimum": 0,
+            "title": "Bytesize",
+            "type": "integer"
+          },
+          "contentType": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Contenttype",
+            "type": "string"
+          },
+          "dangerousExtension": {
+            "default": false,
+            "title": "Dangerousextension",
+            "type": "boolean"
+          },
+          "digestAlgorithm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DigestAlgorithm"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Disposition"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "maxLength": 320,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Filename"
+          },
+          "isAttachment": {
+            "default": false,
+            "title": "Isattachment",
+            "type": "boolean"
+          },
+          "partId": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Partid",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 64,
+                "pattern": "^[0-9a-fA-F]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sha256"
+          },
+          "typeExtensionMismatch": {
+            "default": false,
+            "title": "Typeextensionmismatch",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "partId",
+          "contentType",
+          "byteSize"
+        ],
+        "title": "MimePartObservation",
+        "type": "object"
+      },
+      "ReceivedHop": {
+        "additionalProperties": false,
+        "properties": {
+          "byHost": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Byhost"
+          },
+          "fromHost": {
+            "anyOf": [
+              {
+                "maxLength": 253,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Fromhost"
+          },
+          "latencyJumpSeconds": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Latencyjumpseconds"
+          },
+          "parseWarning": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parsewarning"
+          },
+          "position": {
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Position",
+            "type": "integer"
+          },
+          "privateSource": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Privatesource"
+          },
+          "privateToPublic": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Privatetopublic"
+          },
+          "sourceIp": {
+            "anyOf": [
+              {
+                "maxLength": 45,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sourceip"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timestamp"
+          }
+        },
+        "required": [
+          "position"
+        ],
+        "title": "ReceivedHop",
+        "type": "object"
+      },
+      "RoutingAnomalyObservation": {
+        "additionalProperties": false,
+        "properties": {
+          "anomalyType": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Anomalytype",
+            "type": "string"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Details"
+          },
+          "explanation": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Explanation",
+            "type": "string"
+          },
+          "hopPositions": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 20,
+            "title": "Hoppositions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "anomalyType",
+          "explanation"
+        ],
+        "title": "RoutingAnomalyObservation",
+        "type": "object"
+      },
+      "ScoreBreakdown": {
+        "additionalProperties": false,
+        "properties": {
+          "baseScore": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Basescore",
+            "type": "integer"
+          },
+          "contributions": {
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "maxItems": 500,
+            "title": "Contributions",
+            "type": "array"
+          },
+          "finalScore": {
+            "maximum": 100,
+            "minimum": 0,
+            "title": "Finalscore",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "baseScore",
+          "finalScore"
+        ],
+        "title": "ScoreBreakdown",
+        "type": "object"
+      },
+      "SeverityValue": {
+        "enum": [
+          "info",
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ],
+        "title": "SeverityValue",
+        "type": "string"
       },
       "ValidationError": {
         "properties": {
@@ -155,6 +1649,16 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "VerdictValue": {
+        "enum": [
+          "unknown",
+          "benign",
+          "suspicious",
+          "malicious"
+        ],
+        "title": "VerdictValue",
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -255,6 +1759,94 @@
           }
         ],
         "summary": "Intake"
+      }
+    },
+    "/v1/analyses/{analysis_run_id}": {
+      "get": {
+        "operationId": "analysis_status_v1_analyses__analysis_run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_run_id",
+            "required": true,
+            "schema": {
+              "title": "Analysis Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Analysis Status"
+      }
+    },
+    "/v1/analyses/{analysis_run_id}/result": {
+      "get": {
+        "operationId": "analysis_result_v1_analyses__analysis_run_id__result_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_run_id",
+            "required": true,
+            "schema": {
+              "title": "Analysis Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Analysis Result"
       }
     }
   }

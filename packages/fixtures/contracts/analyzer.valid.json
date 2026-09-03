@@ -10,7 +10,301 @@
 		},
 		"requestedAt": "2026-01-01T00:00:00Z"
 	},
-	"AnalysisIntakeAccepted": { "analysisRunId": "run_01", "status": "accepted" },
-	"AnalysisStatus": { "analysisRunId": "run_01", "status": "queued" },
-	"AnalysisFailure": { "code": "intake_invalid", "message": "Request validation failed", "requestId": "request_01" }
+	"AnalysisIntakeAccepted": {
+		"analysisRunId": "run_01",
+		"status": "accepted"
+	},
+	"AnalysisStatus": {
+		"analysisRunId": "run_01",
+		"status": "processing",
+		"phase": "scoring",
+		"progress": 75,
+		"failure": null
+	},
+	"AnalysisFailure": {
+		"code": "intake_invalid",
+		"message": "Request validation failed",
+		"requestId": "request_01",
+		"retryable": false
+	},
+	"Artifact": {
+		"objectKey": "organizations/org_01/cases/case_01/artifacts/artifact_01.eml",
+		"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"byteSize": 24831,
+		"digestAlgorithm": "sha256"
+	},
+	"AddressObservation": {
+		"value": "Billing <billing@sender.example>",
+		"address": "billing@sender.example",
+		"displayName": "Billing",
+		"domain": "sender.example",
+		"source": "From"
+	},
+	"HeaderObservation": {
+		"name": "Subject",
+		"value": "Urgent notification",
+		"occurrence": 1,
+		"malformed": false
+	},
+	"ReceivedHop": {
+		"position": 1,
+		"fromHost": "mail.example.com",
+		"byHost": "mx.example.org",
+		"sourceIp": "192.0.2.1",
+		"timestamp": "2026-01-01T00:00:00Z",
+		"privateSource": false,
+		"parseWarning": null
+	},
+	"AuthenticationObservation": {
+		"method": "spf",
+		"result": "pass",
+		"declaringHost": "mx.example.org",
+		"reason": "sender IP matches SPF record",
+		"source": "authentication-results",
+		"independentlyVerified": false
+	},
+	"MimePartObservation": {
+		"partId": "part_0",
+		"contentType": "text/plain",
+		"byteSize": 512,
+		"disposition": "inline",
+		"filename": null,
+		"isAttachment": false,
+		"sha256": null,
+		"digestAlgorithm": null,
+		"dangerousExtension": false,
+		"typeExtensionMismatch": false
+	},
+	"IndicatorObservation": {
+		"kind": "url",
+		"value": "https://example.com/login",
+		"normalizedValue": "https://example.com/login",
+		"source": "body",
+		"privateOrReserved": false
+	},
+	"EnrichmentDetails": {
+		"deterministic": true,
+		"category": "phishing",
+		"dnsRecords": ["192.0.2.1"],
+		"asn": "AS12345",
+		"country": "US",
+		"rawScore": 95
+	},
+	"EnrichmentObservation": {
+		"indicator": "https://example.com/login",
+		"provider": "fixture",
+		"mode": "fixture",
+		"reputation": "malicious",
+		"score": 95,
+		"timestamp": "2026-01-01T00:00:00Z",
+		"details": {
+			"deterministic": true,
+			"category": "phishing",
+			"dnsRecords": ["192.0.2.1"],
+			"asn": "AS12345",
+			"country": "US",
+			"rawScore": 95
+		}
+	},
+	"IdentityObservation": {
+		"source": "from",
+		"displayName": "Executive Office",
+		"address": "attacker@external.example",
+		"claimedIdentity": "Executive Office",
+		"inconsistencyType": "executive_title_webmail",
+		"explanation": "Display name claims executive title but sender address is external."
+	},
+	"DateObservation": {
+		"rawValue": "Wed, 01 Jan 2026 00:00:00 +0000",
+		"parsedDate": "2026-01-01T00:00:00Z",
+		"isValid": true,
+		"anomalies": [],
+		"details": "Canonical Date header is valid."
+	},
+	"MessageIdObservation": {
+		"rawValue": "<msg-01@sender.example>",
+		"messageId": "<msg-01@sender.example>",
+		"domain": "sender.example",
+		"isValidSyntax": true,
+		"alignedWithSender": true,
+		"senderDomains": ["sender.example"],
+		"anomalies": [],
+		"details": "Message-ID syntax is valid and aligned with sender."
+	},
+	"ContentIndicatorObservation": {
+		"category": "credential_harvesting",
+		"matchedPhrase": "verify your password",
+		"snippet": "Please verify your password immediately to avoid suspension.",
+		"source": "plain_text"
+	},
+	"LinkMismatchObservation": {
+		"displayText": "https://paypal.example/login",
+		"displayDomain": "paypal.example",
+		"actualHref": "https://attacker.example/login",
+		"actualDomain": "attacker.example",
+		"explanation": "Anchor display text points to paypal.example but href points to attacker.example."
+	},
+	"RoutingAnomalyObservation": {
+		"anomalyType": "private_to_public_transition",
+		"hopPositions": [2, 1],
+		"explanation": "Routing transitioned from private IP 10.0.0.1 to public IP 192.0.2.1.",
+		"details": null
+	},
+	"AuthConflictObservation": {
+		"method": "spf",
+		"outcomes": ["fail", "pass"],
+		"sources": ["authentication-results", "received-spf"],
+		"explanation": "Conflicting SPF outcomes reported between authentication-results and received-spf."
+	},
+	"Finding": {
+		"ruleId": "auth.spf.fail",
+		"category": "authentication",
+		"severity": "high",
+		"scoreContribution": 22,
+		"explanation": "Reported SPF result is fail",
+		"evidenceRefs": ["authentication-results"],
+		"source": "authentication-results"
+	},
+	"ScoreBreakdown": {
+		"baseScore": 0,
+		"contributions": [
+			{
+				"ruleId": "auth.spf.fail",
+				"category": "authentication",
+				"severity": "high",
+				"scoreContribution": 22,
+				"explanation": "Reported SPF result is fail",
+				"evidenceRefs": ["authentication-results"],
+				"source": "authentication-results"
+			}
+		],
+		"finalScore": 22
+	},
+	"AnalysisResult": {
+		"schemaVersion": "1.0.0",
+		"rulesetVersion": "1.0.0",
+		"analysisVersion": "prototype-1",
+		"analysisRunId": "run_01",
+		"organizationId": "org_01",
+		"caseId": "case_01",
+		"artifactSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"artifactByteSize": 24831,
+		"artifactDigestAlgorithm": "sha256",
+		"headers": [
+			{
+				"name": "Subject",
+				"value": "Urgent notification",
+				"occurrence": 1,
+				"malformed": false
+			}
+		],
+		"addresses": [
+			{
+				"value": "Billing <billing@sender.example>",
+				"address": "billing@sender.example",
+				"displayName": "Billing",
+				"domain": "sender.example",
+				"source": "From"
+			}
+		],
+		"receivedHops": [
+			{
+				"position": 1,
+				"fromHost": "mail.example.com",
+				"byHost": "mx.example.org",
+				"sourceIp": "192.0.2.1",
+				"timestamp": "2026-01-01T00:00:00Z",
+				"privateSource": false,
+				"parseWarning": null
+			}
+		],
+		"authentication": [
+			{
+				"method": "spf",
+				"result": "fail",
+				"declaringHost": "mx.example.org",
+				"reason": "SPF fail",
+				"source": "authentication-results",
+				"independentlyVerified": false
+			}
+		],
+		"mimeParts": [
+			{
+				"partId": "part_0",
+				"contentType": "text/plain",
+				"byteSize": 512,
+				"disposition": "inline",
+				"filename": null,
+				"isAttachment": false,
+				"sha256": null,
+				"digestAlgorithm": null,
+				"dangerousExtension": false,
+				"typeExtensionMismatch": false
+			}
+		],
+		"indicators": [
+			{
+				"kind": "url",
+				"value": "https://example.com/login",
+				"normalizedValue": "https://example.com/login",
+				"source": "body",
+				"privateOrReserved": false
+			}
+		],
+		"enrichment": [
+			{
+				"indicator": "https://example.com/login",
+				"provider": "fixture",
+				"mode": "fixture",
+				"reputation": "malicious",
+				"score": 95,
+				"timestamp": "2026-01-01T00:00:00Z",
+				"details": {
+					"deterministic": true,
+					"category": "phishing",
+					"dnsRecords": ["192.0.2.1"],
+					"asn": "AS12345",
+					"country": "US",
+					"rawScore": 95
+				}
+			}
+		],
+		"parserWarnings": [],
+		"identityObservations": [],
+		"dateObservations": [],
+		"messageIdObservations": [],
+		"contentIndicators": [],
+		"linkMismatches": [],
+		"routingAnomalies": [],
+		"authConflicts": [],
+		"findings": [
+			{
+				"ruleId": "auth.spf.fail",
+				"category": "authentication",
+				"severity": "high",
+				"scoreContribution": 40,
+				"explanation": "Reported SPF result is fail",
+				"evidenceRefs": ["authentication-results"],
+				"source": "authentication-results"
+			}
+		],
+		"score": {
+			"baseScore": 0,
+			"contributions": [
+				{
+					"ruleId": "auth.spf.fail",
+					"category": "authentication",
+					"severity": "high",
+					"scoreContribution": 40,
+					"explanation": "Reported SPF result is fail",
+					"evidenceRefs": ["authentication-results"],
+					"source": "authentication-results"
+				}
+			],
+			"finalScore": 40
+		},
+		"verdict": "suspicious",
+		"confidence": 0.85,
+		"analyzedAt": "2026-01-01T00:00:00Z"
+	}
 }

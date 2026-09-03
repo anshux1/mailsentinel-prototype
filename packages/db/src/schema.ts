@@ -7,6 +7,7 @@ import {
 	jsonb,
 	pgEnum,
 	pgTable,
+	real,
 	text,
 	timestamp,
 	uniqueIndex,
@@ -18,7 +19,15 @@ const timestamps = {
 };
 
 export const role = pgEnum("membership_role", ["owner", "investigator", "viewer"]);
-export const analysisRunStatus = pgEnum("analysis_run_status", ["accepted", "queued", "deferred", "failed"]);
+export const analysisRunStatus = pgEnum("analysis_run_status", [
+	"accepted",
+	"queued",
+	"processing",
+	"completed",
+	"deferred",
+	"failed",
+]);
+export const analysisVerdict = pgEnum("analysis_verdict", ["unknown", "benign", "suspicious", "malicious"]);
 
 // Better Auth tables follow the installed adapter's required field names.
 export const user = pgTable("user", {
@@ -143,6 +152,7 @@ export const evidenceMetadata = pgTable(
 			foreignColumns: [cases.organizationId, cases.id],
 			name: "evidence_metadata_org_case_fk",
 		}),
+		uniqueIndex("evidence_org_case_id_uidx").on(table.organizationId, table.caseId, table.id),
 		index("evidence_org_case_idx").on(table.organizationId, table.caseId),
 	],
 );
@@ -157,8 +167,26 @@ export const analysisRuns = pgTable(
 		caseId: text("case_id")
 			.notNull()
 			.references(() => cases.id, { onDelete: "cascade" }),
+		evidenceId: text("evidence_id").references(() => evidenceMetadata.id, { onDelete: "restrict" }),
 		status: analysisRunStatus("status").default("accepted").notNull(),
+		verdict: analysisVerdict("verdict"),
+		score: integer("score"),
+		confidence: real("confidence"),
+		analysisVersion: text("analysis_version"),
+		rulesetVersion: text("ruleset_version"),
+		resultSchemaVersion: text("result_schema_version"),
+		resultSnapshot: jsonb("result_snapshot"),
 		failureCode: text("failure_code"),
+		failureMessage: text("failure_message"),
+		retryable: boolean("retryable").default(false).notNull(),
+		attempts: integer("attempts").default(0).notNull(),
+		queuedAt: timestamp("queued_at", { withTimezone: true }),
+		startedAt: timestamp("started_at", { withTimezone: true }),
+		completedAt: timestamp("completed_at", { withTimezone: true }),
+		failedAt: timestamp("failed_at", { withTimezone: true }),
+		idempotencyKey: text("idempotency_key"),
+		phase: text("phase"),
+		progress: integer("progress"),
 		...timestamps,
 	},
 	(table) => [
@@ -167,7 +195,14 @@ export const analysisRuns = pgTable(
 			foreignColumns: [cases.organizationId, cases.id],
 			name: "analysis_runs_org_case_fk",
 		}),
+		foreignKey({
+			columns: [table.organizationId, table.caseId, table.evidenceId],
+			foreignColumns: [evidenceMetadata.organizationId, evidenceMetadata.caseId, evidenceMetadata.id],
+			name: "analysis_runs_org_case_evidence_fk",
+		}),
 		index("analysis_runs_org_case_idx").on(table.organizationId, table.caseId),
+		index("analysis_runs_status_idx").on(table.organizationId, table.status),
+		uniqueIndex("analysis_runs_idempotency_key_uidx").on(table.organizationId, table.idempotencyKey),
 	],
 );
 

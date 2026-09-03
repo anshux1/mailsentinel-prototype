@@ -55,10 +55,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/analyses/{analysis_run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Analysis Status */
+        get: operations["analysis_status_v1_analyses__analysis_run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/analyses/{analysis_run_id}/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Analysis Result */
+        get: operations["analysis_result_v1_analyses__analysis_run_id__result_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AddressObservation */
+        AddressObservation: {
+            /**
+             * Address
+             * @default null
+             */
+            address: string | null;
+            /**
+             * Displayname
+             * @default null
+             */
+            displayName: string | null;
+            /**
+             * Domain
+             * @default null
+             */
+            domain: string | null;
+            /** Source */
+            source: string;
+            /** Value */
+            value: string;
+        };
+        /** AnalysisFailure */
+        AnalysisFailure: {
+            code: components["schemas"]["AnalysisFailureCode"];
+            /** Message */
+            message: string;
+            /**
+             * Requestid
+             * @default null
+             */
+            requestId: string | null;
+            /**
+             * Retryable
+             * @default false
+             */
+            retryable: boolean;
+        };
+        /**
+         * AnalysisFailureCode
+         * @enum {string}
+         */
+        AnalysisFailureCode: "intake_invalid" | "evidence_not_found" | "evidence_too_large" | "evidence_digest_mismatch" | "evidence_size_mismatch" | "evidence_storage_unavailable" | "message_invalid" | "header_limit_exceeded" | "mime_limit_exceeded" | "attachment_limit_exceeded" | "analysis_run_not_found" | "analysis_failed" | "internal_error";
         /** AnalysisIntakeAccepted */
         AnalysisIntakeAccepted: {
             /** Analysisrunid */
@@ -72,6 +149,7 @@ export interface components {
          *       "analysisRunId": "run_01",
          *       "artifact": {
          *         "byteSize": 24831,
+         *         "digestAlgorithm": "sha256",
          *         "objectKey": "organizations/org_01/cases/case_01/artifacts/artifact_01.eml",
          *         "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
          *       },
@@ -95,24 +173,504 @@ export interface components {
             requestedAt: string;
         };
         /**
+         * AnalysisPhase
+         * @enum {string}
+         */
+        AnalysisPhase: "queued" | "fetching_evidence" | "parsing" | "extracting" | "enriching" | "scoring" | "completed" | "failed";
+        /** AnalysisResult */
+        AnalysisResult: {
+            /** Addresses */
+            addresses?: components["schemas"]["AddressObservation"][];
+            /** Analysisrunid */
+            analysisRunId: string;
+            /** Analysisversion */
+            analysisVersion: string;
+            /**
+             * Analyzedat
+             * Format: date-time
+             */
+            analyzedAt: string;
+            /** Artifactbytesize */
+            artifactByteSize: number;
+            /** @default sha256 */
+            artifactDigestAlgorithm: components["schemas"]["DigestAlgorithm"];
+            /** Artifactsha256 */
+            artifactSha256: string;
+            /** Authconflicts */
+            authConflicts?: components["schemas"]["AuthConflictObservation"][];
+            /** Authentication */
+            authentication?: components["schemas"]["AuthenticationObservation"][];
+            /** Caseid */
+            caseId: string;
+            /** Confidence */
+            confidence: number;
+            /** Contentindicators */
+            contentIndicators?: components["schemas"]["ContentIndicatorObservation"][];
+            /** Dateobservations */
+            dateObservations?: components["schemas"]["DateObservation"][];
+            /** Enrichment */
+            enrichment?: components["schemas"]["EnrichmentObservation"][];
+            /** Findings */
+            findings?: components["schemas"]["Finding"][];
+            /** Headers */
+            headers?: components["schemas"]["HeaderObservation"][];
+            /** Identityobservations */
+            identityObservations?: components["schemas"]["IdentityObservation"][];
+            /** Indicators */
+            indicators?: components["schemas"]["IndicatorObservation"][];
+            /** Linkmismatches */
+            linkMismatches?: components["schemas"]["LinkMismatchObservation"][];
+            /** Messageidobservations */
+            messageIdObservations?: components["schemas"]["MessageIdObservation"][];
+            /** Mimeparts */
+            mimeParts?: components["schemas"]["MimePartObservation"][];
+            /** Organizationid */
+            organizationId: string;
+            /** Parserwarnings */
+            parserWarnings?: string[];
+            /** Receivedhops */
+            receivedHops?: components["schemas"]["ReceivedHop"][];
+            /** Routinganomalies */
+            routingAnomalies?: components["schemas"]["RoutingAnomalyObservation"][];
+            /**
+             * Rulesetversion
+             * @default 1.0.0
+             */
+            rulesetVersion: string;
+            /**
+             * Schemaversion
+             * @default 1.0.0
+             */
+            schemaVersion: string;
+            score: components["schemas"]["ScoreBreakdown"];
+            verdict: components["schemas"]["VerdictValue"];
+        };
+        /** AnalysisStatus */
+        AnalysisStatus: {
+            /** Analysisrunid */
+            analysisRunId: string;
+            /** @default null */
+            failure: components["schemas"]["AnalysisFailure"] | null;
+            /** @default null */
+            phase: components["schemas"]["AnalysisPhase"] | null;
+            /**
+             * Progress
+             * @default null
+             */
+            progress: number | null;
+            status: components["schemas"]["AnalysisStatusValue"];
+        };
+        /**
          * AnalysisStatusValue
          * @enum {string}
          */
-        AnalysisStatusValue: "accepted" | "queued" | "deferred" | "failed";
+        AnalysisStatusValue: "accepted" | "queued" | "processing" | "completed" | "deferred" | "failed";
         /** Artifact */
         Artifact: {
             /** Bytesize */
             byteSize: number;
+            /** @default sha256 */
+            digestAlgorithm: components["schemas"]["DigestAlgorithm"];
             /** Objectkey */
             objectKey: string;
             /** Sha256 */
             sha256: string;
         };
+        /** AuthConflictObservation */
+        AuthConflictObservation: {
+            /** Explanation */
+            explanation: string;
+            /** Method */
+            method: string;
+            /** Outcomes */
+            outcomes?: string[];
+            /** Sources */
+            sources?: string[];
+        };
+        /** AuthenticationObservation */
+        AuthenticationObservation: {
+            /**
+             * Algorithm
+             * @default null
+             */
+            algorithm: string | null;
+            /**
+             * Declaringhost
+             * @default null
+             */
+            declaringHost: string | null;
+            /**
+             * Domain
+             * @default null
+             */
+            domain: string | null;
+            /**
+             * Identity
+             * @default null
+             */
+            identity: string | null;
+            /**
+             * Independentlyverified
+             * @default false
+             */
+            independentlyVerified: boolean;
+            /** Method */
+            method: string;
+            /**
+             * Reason
+             * @default null
+             */
+            reason: string | null;
+            /** Result */
+            result: string;
+            /**
+             * Selector
+             * @default null
+             */
+            selector: string | null;
+            /** Signedheaders */
+            signedHeaders?: string[];
+            /**
+             * Signingdomain
+             * @default null
+             */
+            signingDomain: string | null;
+            /**
+             * Source
+             * @default authentication-results
+             */
+            source: string;
+        };
+        /** ContentIndicatorObservation */
+        ContentIndicatorObservation: {
+            /** Category */
+            category: string;
+            /** Matchedphrase */
+            matchedPhrase: string;
+            /** Snippet */
+            snippet: string;
+            /** Source */
+            source: string;
+        };
+        /** DateObservation */
+        DateObservation: {
+            /** Anomalies */
+            anomalies?: string[];
+            /**
+             * Details
+             * @default null
+             */
+            details: string | null;
+            /**
+             * Isvalid
+             * @default false
+             */
+            isValid: boolean;
+            /**
+             * Parseddate
+             * @default null
+             */
+            parsedDate: string | null;
+            /**
+             * Rawvalue
+             * @default null
+             */
+            rawValue: string | null;
+        };
+        /**
+         * DigestAlgorithm
+         * @enum {string}
+         */
+        DigestAlgorithm: "sha256" | "sha384" | "sha512";
+        /** EnrichmentDetails */
+        EnrichmentDetails: {
+            /**
+             * Asn
+             * @default null
+             */
+            asn: string | null;
+            /**
+             * Category
+             * @default null
+             */
+            category: string | null;
+            /**
+             * Country
+             * @default null
+             */
+            country: string | null;
+            /**
+             * Deterministic
+             * @default null
+             */
+            deterministic: boolean | null;
+            /** Dnsrecords */
+            dnsRecords?: string[];
+            /**
+             * Rawscore
+             * @default null
+             */
+            rawScore: number | null;
+        };
+        /** EnrichmentObservation */
+        EnrichmentObservation: {
+            details?: components["schemas"]["EnrichmentDetails"];
+            /** Indicator */
+            indicator: string;
+            /** Mode */
+            mode: string;
+            /** Provider */
+            provider: string;
+            /**
+             * Reputation
+             * @default null
+             */
+            reputation: string | null;
+            /**
+             * Score
+             * @default null
+             */
+            score: number | null;
+            /**
+             * Timestamp
+             * @default null
+             */
+            timestamp: string | null;
+        };
+        /** Finding */
+        Finding: {
+            category: components["schemas"]["FindingCategory"];
+            /** Evidencerefs */
+            evidenceRefs?: string[];
+            /** Explanation */
+            explanation: string;
+            /** Ruleid */
+            ruleId: string;
+            /** Scorecontribution */
+            scoreContribution: number;
+            severity: components["schemas"]["SeverityValue"];
+            /** Source */
+            source: string;
+        };
+        /**
+         * FindingCategory
+         * @enum {string}
+         */
+        FindingCategory: "headers" | "authentication" | "routing" | "url" | "domain" | "ip" | "attachment" | "content" | "parser" | "enrichment";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HeaderObservation */
+        HeaderObservation: {
+            /**
+             * Malformed
+             * @default false
+             */
+            malformed: boolean;
+            /** Name */
+            name: string;
+            /** Occurrence */
+            occurrence: number;
+            /** Value */
+            value: string;
+        };
+        /** IdentityObservation */
+        IdentityObservation: {
+            /** Address */
+            address: string;
+            /** Claimedidentity */
+            claimedIdentity: string;
+            /** Displayname */
+            displayName: string;
+            /** Explanation */
+            explanation: string;
+            /** Inconsistencytype */
+            inconsistencyType: string;
+            /** Source */
+            source: string;
+        };
+        /** IndicatorObservation */
+        IndicatorObservation: {
+            /** Kind */
+            kind: string;
+            /** Normalizedvalue */
+            normalizedValue: string;
+            /**
+             * Privateorreserved
+             * @default null
+             */
+            privateOrReserved: boolean | null;
+            /** Source */
+            source: string;
+            /** Value */
+            value: string;
+        };
+        /** LinkMismatchObservation */
+        LinkMismatchObservation: {
+            /** Actualdomain */
+            actualDomain: string;
+            /** Actualhref */
+            actualHref: string;
+            /** Displaydomain */
+            displayDomain: string;
+            /** Displaytext */
+            displayText: string;
+            /** Explanation */
+            explanation: string;
+        };
+        /** MessageIdObservation */
+        MessageIdObservation: {
+            /**
+             * Alignedwithsender
+             * @default false
+             */
+            alignedWithSender: boolean;
+            /** Anomalies */
+            anomalies?: string[];
+            /**
+             * Details
+             * @default null
+             */
+            details: string | null;
+            /**
+             * Domain
+             * @default null
+             */
+            domain: string | null;
+            /**
+             * Isvalidsyntax
+             * @default false
+             */
+            isValidSyntax: boolean;
+            /**
+             * Messageid
+             * @default null
+             */
+            messageId: string | null;
+            /**
+             * Rawvalue
+             * @default null
+             */
+            rawValue: string | null;
+            /** Senderdomains */
+            senderDomains?: string[];
+        };
+        /** MimePartObservation */
+        MimePartObservation: {
+            /** Bytesize */
+            byteSize: number;
+            /** Contenttype */
+            contentType: string;
+            /**
+             * Dangerousextension
+             * @default false
+             */
+            dangerousExtension: boolean;
+            /** @default null */
+            digestAlgorithm: components["schemas"]["DigestAlgorithm"] | null;
+            /**
+             * Disposition
+             * @default null
+             */
+            disposition: string | null;
+            /**
+             * Filename
+             * @default null
+             */
+            filename: string | null;
+            /**
+             * Isattachment
+             * @default false
+             */
+            isAttachment: boolean;
+            /** Partid */
+            partId: string;
+            /**
+             * Sha256
+             * @default null
+             */
+            sha256: string | null;
+            /**
+             * Typeextensionmismatch
+             * @default false
+             */
+            typeExtensionMismatch: boolean;
+        };
+        /** ReceivedHop */
+        ReceivedHop: {
+            /**
+             * Byhost
+             * @default null
+             */
+            byHost: string | null;
+            /**
+             * Fromhost
+             * @default null
+             */
+            fromHost: string | null;
+            /**
+             * Latencyjumpseconds
+             * @default null
+             */
+            latencyJumpSeconds: number | null;
+            /**
+             * Parsewarning
+             * @default null
+             */
+            parseWarning: string | null;
+            /** Position */
+            position: number;
+            /**
+             * Privatesource
+             * @default null
+             */
+            privateSource: boolean | null;
+            /**
+             * Privatetopublic
+             * @default null
+             */
+            privateToPublic: boolean | null;
+            /**
+             * Sourceip
+             * @default null
+             */
+            sourceIp: string | null;
+            /**
+             * Timestamp
+             * @default null
+             */
+            timestamp: string | null;
+        };
+        /** RoutingAnomalyObservation */
+        RoutingAnomalyObservation: {
+            /** Anomalytype */
+            anomalyType: string;
+            /**
+             * Details
+             * @default null
+             */
+            details: string | null;
+            /** Explanation */
+            explanation: string;
+            /** Hoppositions */
+            hopPositions?: number[];
+        };
+        /** ScoreBreakdown */
+        ScoreBreakdown: {
+            /** Basescore */
+            baseScore: number;
+            /** Contributions */
+            contributions?: components["schemas"]["Finding"][];
+            /** Finalscore */
+            finalScore: number;
+        };
+        /**
+         * SeverityValue
+         * @enum {string}
+         */
+        SeverityValue: "info" | "low" | "medium" | "high" | "critical";
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -126,6 +684,11 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * VerdictValue
+         * @enum {string}
+         */
+        VerdictValue: "unknown" | "benign" | "suspicious" | "malicious";
     };
     responses: never;
     parameters: never;
@@ -199,6 +762,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AnalysisIntakeAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    analysis_status_v1_analyses__analysis_run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    analysis_result_v1_analyses__analysis_run_id__result_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnalysisResult"];
                 };
             };
             /** @description Validation Error */

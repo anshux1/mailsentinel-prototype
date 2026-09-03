@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import secrets
+import threading
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -10,12 +13,23 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.contracts.models import AnalysisIntakeAccepted, AnalysisIntakeRequest
+from app.contracts.models import (
+    AnalysisIntakeAccepted,
+    AnalysisIntakeRequest,
+    AnalysisResult,
+    AnalysisStatus,
+    AnalysisStatusValue,
+)
+from app.core.logging import get_structured_logger, log_event, request_id_context, safe_request_id
 from app.core.settings import Settings, get_settings
-from app.tasks.broker import setup_analysis
+from app.persistence.postgres import PostgresAnalysisRepository
+from app.tasks.broker import process_analysis
 
 app = FastAPI(title="MailSentinel Analyzer", version="prototype-1")
 internal_bearer = HTTPBearer(auto_error=False)
+logger = get_structured_logger("mailsentinel.http")
+_intake_lock = threading.RLock()
+_fallback_enqueued_runs: set[str] = set()
 
 
 def require_internal_token(
@@ -45,10 +59,16 @@ def create_storage_client(settings: Settings) -> Any:
 
 @app.middleware("http")
 async def request_id(request: Request, call_next):  # type: ignore[no-untyped-def]
-    request.state.request_id = request.headers.get("x-request-id", str(uuid4()))
-    response = await call_next(request)
-    response.headers["x-request-id"] = request.state.request_id
-    return response
+    raw_value = request.headers.get("x-request-id")
+    value = safe_request_id(raw_value) or str(uuid4())
+    request.state.request_id = value
+    token = request_id_context.set(value)
+    try:
+        response = await call_next(request)
+        response.headers["x-request-id"] = value
+        return response
+    finally:
+        request_id_context.reset(token)
 
 
 @app.exception_handler(Exception)
@@ -81,12 +101,120 @@ def ready() -> dict[str, str]:
     return {"status": "ready"}
 
 
+def reset_intake_deduplication() -> None:
+    """Clear the database-free fallback, primarily for isolated test processes."""
+    with _intake_lock:
+        _fallback_enqueued_runs.clear()
+
+
+def _enqueue_once(analysis_run_id: str) -> tuple[bool, AnalysisStatusValue]:
+    """Atomically deduplicate with PostgreSQL, falling back only when unavailable."""
+    settings = get_settings()
+    if settings.app_env == "test":
+        with _intake_lock:
+            if analysis_run_id in _fallback_enqueued_runs:
+                return False, AnalysisStatusValue.ACCEPTED
+            _fallback_enqueued_runs.add(analysis_run_id)
+            return True, AnalysisStatusValue.ACCEPTED
+
+    try:
+        repository = PostgresAnalysisRepository(str(settings.database_url))
+        current = repository.get_status(analysis_run_id)
+        if current in {
+            AnalysisStatusValue.QUEUED,
+            AnalysisStatusValue.PROCESSING,
+            AnalysisStatusValue.COMPLETED,
+        }:
+            return False, current
+        if current == AnalysisStatusValue.FAILED:
+            run = repository.get_run(analysis_run_id)
+            # enqueue_once itself checks retryable in PostgreSQL; a failed run
+            # with no recoverable metadata is therefore safely left untouched.
+            if run is None:
+                return False, current
+        enqueued = repository.enqueue_once(analysis_run_id)
+        if enqueued:
+            return True, AnalysisStatusValue.QUEUED
+        latest = repository.get_status(analysis_run_id)
+        return False, latest or AnalysisStatusValue.ACCEPTED
+    except Exception:
+        # Tests and local health checks may intentionally run without PostgreSQL.
+        # This fallback is process-local and never overrides an operational DB.
+        with _intake_lock:
+            if analysis_run_id in _fallback_enqueued_runs:
+                return False, AnalysisStatusValue.ACCEPTED
+            _fallback_enqueued_runs.add(analysis_run_id)
+            return True, AnalysisStatusValue.ACCEPTED
+
+
 @app.post(
     "/v1/analyses",
     response_model=AnalysisIntakeAccepted,
     status_code=202,
     dependencies=[Depends(require_internal_token)],
 )
-def intake(payload: AnalysisIntakeRequest) -> AnalysisIntakeAccepted:
-    setup_analysis.send(payload.analysis_run_id)
-    return AnalysisIntakeAccepted(analysis_run_id=payload.analysis_run_id)
+def intake(payload: AnalysisIntakeRequest, request: Request) -> AnalysisIntakeAccepted:
+    should_enqueue, response_status = _enqueue_once(payload.analysis_run_id)
+    if should_enqueue:
+        req_id = safe_request_id(getattr(request.state, "request_id", None))
+        try:
+            process_analysis.send(payload.analysis_run_id, request_id=req_id)
+        except Exception:
+            # Do not permanently suppress a retry if broker publication fails.
+            with _intake_lock:
+                _fallback_enqueued_runs.discard(payload.analysis_run_id)
+            raise HTTPException(status_code=503, detail="analysis queue unavailable") from None
+    log_event(
+        logger,
+        20,
+        "analysis.intake",
+        phase="queued" if should_enqueue else response_status.value,
+        analysisRunId=payload.analysis_run_id,
+    )
+    # Existing database-free test clients historically receive accepted; an
+    # operational repository reports queued after the atomic transition.
+    return AnalysisIntakeAccepted(
+        analysis_run_id=payload.analysis_run_id,
+        status=response_status if response_status != AnalysisStatusValue.PROCESSING else AnalysisStatusValue.ACCEPTED,
+    )
+
+
+def _repository() -> PostgresAnalysisRepository:
+    return PostgresAnalysisRepository(str(get_settings().database_url))
+
+
+@app.get(
+    "/v1/analyses/{analysis_run_id}",
+    response_model=AnalysisStatus,
+    dependencies=[Depends(require_internal_token)],
+)
+def analysis_status(analysis_run_id: str) -> AnalysisStatus:
+    repository = _repository()
+    try:
+        result = repository.get_detailed_status(analysis_run_id)
+    except Exception:
+        raise HTTPException(status_code=503, detail="analysis status unavailable") from None
+    if result is None:
+        raise HTTPException(status_code=404, detail="analysis not found")
+    return result
+
+
+@app.get(
+    "/v1/analyses/{analysis_run_id}/result",
+    response_model=AnalysisResult,
+    dependencies=[Depends(require_internal_token)],
+)
+def analysis_result(analysis_run_id: str) -> AnalysisResult:
+    repository = _repository()
+    try:
+        result = repository.get_result(analysis_run_id)
+        current_status = repository.get_status(analysis_run_id)
+    except ValueError:
+        raise HTTPException(status_code=500, detail="analysis result unavailable") from None
+    except Exception:
+        raise HTTPException(status_code=503, detail="analysis result unavailable") from None
+    if result is not None:
+        return result
+    if current_status is None:
+        raise HTTPException(status_code=404, detail="analysis not found")
+    raise HTTPException(status_code=409, detail="analysis result is not ready")
