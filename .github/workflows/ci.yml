@@ -73,6 +73,20 @@ jobs:
         run: docker compose -f infra/compose.yaml config --quiet
       - name: Start private service stack
         run: docker compose -f infra/compose.yaml up -d --build --wait postgres redis minio analyzer worker
+      - name: Seed the analysis run that intake claims
+        run: |
+          set -euo pipefail
+          docker compose -f infra/compose.yaml exec -T postgres \
+            psql -v ON_ERROR_STOP=1 -U mailsentinel -d mailsentinel <<'SQL'
+          INSERT INTO organizations (id, name) VALUES ('org_ci', 'CI Organization')
+            ON CONFLICT (id) DO NOTHING;
+          INSERT INTO cases (id, organization_id, title) VALUES ('case_ci', 'org_ci', 'CI Case')
+            ON CONFLICT (id) DO NOTHING;
+          INSERT INTO analysis_runs (id, organization_id, case_id, status)
+            VALUES ('run_ci', 'org_ci', 'case_ci', 'accepted')
+            ON CONFLICT (id) DO NOTHING;
+          SQL
+
       - name: Exercise protected intake and worker consumption
         run: |
           set -euo pipefail
@@ -123,7 +137,11 @@ jobs:
               assert response.status == 202, response.status
           PY
           queued="$($compose exec -T redis redis-cli llen dramatiq:analysis | tr -d '\r')"
-          test "$queued" -gt 0
+          if test "$queued" -le 0; then
+            echo "intake returned 202 but enqueued nothing: dramatiq:analysis is empty" >&2
+            $compose logs --no-color --tail 50 analyzer >&2
+            exit 1
+          fi
           $compose start worker
           for _ in $(seq 1 30); do
             queued="$($compose exec -T redis redis-cli llen dramatiq:analysis | tr -d '\r')"

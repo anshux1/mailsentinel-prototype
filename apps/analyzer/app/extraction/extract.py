@@ -107,16 +107,25 @@ def _safe_ip(value: str) -> tuple[str, bool] | None:
         parsed = ipaddress.ip_address(val)
     except ValueError:
         return None
+    # An IPv4-mapped IPv6 address *is* the IPv4 address it wraps. CPython has
+    # changed both how it renders these (``::ffff:7f00:1`` vs
+    # ``::ffff:127.0.0.1``) and how it answers is_private/is_global for them
+    # across patch releases, so derive both from the mapped address explicitly.
+    # Forensic output has to be reproducible regardless of the interpreter
+    # build that produced it.
+    mapped = getattr(parsed, "ipv4_mapped", None)
+    subject: ipaddress.IPv4Address | ipaddress.IPv6Address = mapped if mapped is not None else parsed
+    text = f"::ffff:{mapped}" if mapped is not None else str(parsed)
     is_private_or_reserved = bool(
-        parsed.is_private
-        or parsed.is_loopback
-        or parsed.is_link_local
-        or parsed.is_reserved
-        or parsed.is_multicast
-        or parsed.is_unspecified
-        or not parsed.is_global
+        subject.is_private
+        or subject.is_loopback
+        or subject.is_link_local
+        or subject.is_reserved
+        or subject.is_multicast
+        or subject.is_unspecified
+        or not subject.is_global
     )
-    return str(parsed), is_private_or_reserved
+    return text, is_private_or_reserved
 
 
 def extract_addresses(message: ParsedMessage) -> list[AddressObservation]:
