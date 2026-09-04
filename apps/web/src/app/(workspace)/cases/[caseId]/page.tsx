@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderX, Mail, Waypoints } from "lucide-react";
+import { FolderX, Layers, Mail, Waypoints } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { use, useState } from "react";
 
@@ -16,10 +16,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStartAnalysis } from "@/features/analysis/queries";
 import { RunList } from "@/features/analysis/run-list";
+import { BatchList } from "@/features/batches/batch-list";
 import { useCase } from "@/features/cases/queries";
 import { EvidenceList } from "@/features/evidence/evidence-list";
 import { useEvidenceList } from "@/features/evidence/queries";
 import { UploadEvidenceDialog } from "@/features/evidence/upload-evidence-dialog";
+import { CaseMailboxSyncAction } from "@/features/mailbox/case-sync-action";
 import { formatDateTime, pluralize } from "@/lib/format";
 
 export default function CaseDetailPage({
@@ -95,7 +97,12 @@ export default function CaseDetailPage({
 						</span>
 					</>
 				}
-				actions={<UploadEvidenceDialog caseId={caseId} />}
+				actions={
+					<>
+						<CaseMailboxSyncAction caseId={caseId} />
+						<UploadEvidenceDialog caseId={caseId} />
+					</>
+				}
 			/>
 
 			<div className="rounded-lg border border-hairline bg-surface p-6">
@@ -119,6 +126,10 @@ export default function CaseDetailPage({
 						<Mail className="size-3.5" />
 						Evidence
 					</TabsTrigger>
+					<TabsTrigger value="batches">
+						<Layers className="size-3.5" />
+						Ingestion
+					</TabsTrigger>
 					<TabsTrigger value="analysis">
 						<Waypoints className="size-3.5" />
 						Analysis runs
@@ -137,6 +148,10 @@ export default function CaseDetailPage({
 							);
 						}}
 					/>
+				</TabsContent>
+
+				<TabsContent value="batches" className="pt-5">
+					<BatchList caseId={caseId} />
 				</TabsContent>
 
 				<TabsContent value="analysis" className="pt-5">

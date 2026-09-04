@@ -4,10 +4,12 @@ import {
 	CircleSlash,
 	Clock,
 	Loader2,
+	PlugZap,
 	ShieldAlert,
 	ShieldCheck,
 	ShieldQuestion,
 	ShieldX,
+	Unplug,
 	Upload,
 	XCircle,
 } from "lucide-react";
@@ -33,6 +35,15 @@ export type Verdict = "unknown" | "benign" | "suspicious" | "malicious";
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
 
 export type ReportStatus = "pending" | "generating" | "completed" | "failed";
+
+export type BatchStatus =
+	| "pending"
+	| "segmenting"
+	| "ready"
+	| "partial"
+	| "failed";
+
+export type MailboxStatus = "connected" | "disconnected" | "syncing" | "error";
 
 const RUN_STATUS: Record<
 	AnalysisRunStatus,
@@ -92,6 +103,36 @@ const REPORT_STATUS: Record<
 	},
 	completed: { label: "Completed", variant: "success", icon: CheckCircle2 },
 	failed: { label: "Failed", variant: "danger", icon: XCircle },
+};
+
+/**
+ * A batch is `partial` when some children were ingested and others failed. That
+ * is a warning rather than a failure: the operator still has usable evidence.
+ */
+const BATCH_STATUS: Record<
+	BatchStatus,
+	{ label: string; variant: BadgeVariant; icon: typeof Clock; spin?: boolean }
+> = {
+	pending: { label: "Pending", variant: "default", icon: CircleDashed },
+	segmenting: {
+		label: "Segmenting",
+		variant: "info",
+		icon: Loader2,
+		spin: true,
+	},
+	ready: { label: "Ready", variant: "success", icon: CheckCircle2 },
+	partial: { label: "Partial", variant: "warning", icon: ShieldAlert },
+	failed: { label: "Failed", variant: "danger", icon: XCircle },
+};
+
+const MAILBOX_STATUS: Record<
+	MailboxStatus,
+	{ label: string; variant: BadgeVariant; icon: typeof Clock; spin?: boolean }
+> = {
+	connected: { label: "Connected", variant: "success", icon: PlugZap },
+	syncing: { label: "Syncing", variant: "info", icon: Loader2, spin: true },
+	disconnected: { label: "Disconnected", variant: "default", icon: Unplug },
+	error: { label: "Error", variant: "danger", icon: XCircle },
 };
 
 export function RunStatusBadge({
@@ -178,6 +219,47 @@ export function ReportStatusBadge({
 			{spec.label}
 		</Badge>
 	);
+}
+
+export function BatchStatusBadge({
+	status,
+	className,
+}: {
+	status: string;
+	className?: string;
+}) {
+	const spec = BATCH_STATUS[status as BatchStatus] ?? BATCH_STATUS.pending;
+	const Icon = spec.icon;
+	return (
+		<Badge variant={spec.variant} className={className}>
+			<Icon className={cn("size-3", spec.spin && "animate-spin")} />
+			{spec.label}
+		</Badge>
+	);
+}
+
+export function MailboxStatusBadge({
+	status,
+	className,
+}: {
+	status: string;
+	className?: string;
+}) {
+	const spec =
+		MAILBOX_STATUS[status as MailboxStatus] ?? MAILBOX_STATUS.disconnected;
+	const Icon = spec.icon;
+	return (
+		<Badge variant={spec.variant} className={className}>
+			<Icon className={cn("size-3", spec.spin && "animate-spin")} />
+			{spec.label}
+		</Badge>
+	);
+}
+
+export const ACTIVE_BATCH_STATUSES: BatchStatus[] = ["pending", "segmenting"];
+
+export function isActiveBatchStatus(status: string): boolean {
+	return ACTIVE_BATCH_STATUSES.includes(status as BatchStatus);
 }
 
 export const ACTIVE_RUN_STATUSES: AnalysisRunStatus[] = [

@@ -1,6 +1,9 @@
 "use client";
 
 import { Check, LogOut, Minus } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 
 import { Field, FieldGrid } from "@/components/common/field";
 import { Stagger, StaggerItem } from "@/components/common/motion";
@@ -16,6 +19,8 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { useSession, useSignOut } from "@/features/auth/use-session";
+import { MailboxConnections } from "@/features/mailbox/mailbox-connections";
+import { mailboxOAuthErrorMessage } from "@/features/mailbox/oauth-result";
 import { useOrganizations } from "@/features/organization/use-organizations";
 import { titleCase } from "@/lib/format";
 import {
@@ -39,13 +44,49 @@ const PERMISSIONS: Permission[] = [
 	"reports:generate",
 	"retention:manage",
 	"admin:manage",
+	"mailbox:manage",
 ];
+
+/**
+ * The Gmail callback is a redirect handler, so it reports its outcome as a
+ * query parameter here. The result is announced once and then stripped from the
+ * URL, so a reload or a shared link does not replay a stale toast.
+ */
+function useMailboxOAuthResult() {
+	const router = useRouter();
+	const announced = useRef(false);
+
+	useEffect(() => {
+		if (announced.current) return;
+
+		const params = new URLSearchParams(window.location.search);
+		const connected = params.get("mailbox_connected");
+		const error = params.get("error");
+		if (!connected && !error) return;
+
+		announced.current = true;
+
+		if (connected === "true") {
+			toast.success("Mailbox connected", {
+				description: "Read-only Gmail access is ready to sync into a case.",
+			});
+		} else if (error) {
+			toast.error("Mailbox not connected", {
+				description: mailboxOAuthErrorMessage(error),
+			});
+		}
+
+		router.replace("/settings");
+	}, [router]);
+}
 
 export default function SettingsPage() {
 	const { user } = useSession();
 	const { organizations, activeOrganization, role, setActive } =
 		useOrganizations();
 	const signOut = useSignOut();
+
+	useMailboxOAuthResult();
 
 	return (
 		<div className="space-y-10">
@@ -132,6 +173,18 @@ export default function SettingsPage() {
 						);
 					})}
 				</Stagger>
+			</section>
+
+			<section id="mailbox" className="space-y-4">
+				<h2 className="font-medium text-[18px] text-ink tracking-[0.2px]">
+					Mailbox connectors
+				</h2>
+				<p className="text-[14px] text-mute leading-[1.6]">
+					A connected mailbox pulls messages directly into a case as immutable
+					evidence. Access is read-only, the refresh token is stored encrypted,
+					and only an owner can connect or disconnect an account.
+				</p>
+				<MailboxConnections />
 			</section>
 
 			<section className="space-y-4">

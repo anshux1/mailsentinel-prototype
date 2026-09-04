@@ -15,6 +15,8 @@ const MESSAGES: Record<string, string> = {
 	CONFLICT: "This conflicts with the current state of the record.",
 	PAYLOAD_TOO_LARGE: "That file is larger than the configured evidence limit.",
 	BAD_REQUEST: "Some of the details supplied are not valid.",
+	MAILBOX_CONNECTORS_DISABLED:
+		"Mailbox connectors are turned off for this deployment.",
 	DEPENDENCY_ERROR: "A required service is unavailable. Try again shortly.",
 	BAD_GATEWAY: "A required service is unavailable. Try again shortly.",
 	REPOSITORY_ERROR: "The workspace database is unavailable. Try again shortly.",
@@ -63,4 +65,13 @@ export function isForbidden(error: unknown): boolean {
 
 export function isNotFound(error: unknown): boolean {
 	return errorStatus(error) === 404;
+}
+
+/**
+ * Mailbox procedures reject with a distinguishable code when the deployment has
+ * `MAILBOX_CONNECTORS_ENABLED=false`. That is a configuration state, not a
+ * permission failure, so the UI explains it instead of showing an error.
+ */
+export function isMailboxDisabled(error: unknown): boolean {
+	return errorCode(error) === "MAILBOX_CONNECTORS_DISABLED";
 }

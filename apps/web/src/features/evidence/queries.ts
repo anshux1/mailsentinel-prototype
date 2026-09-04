@@ -75,16 +75,21 @@ export function useUploadEvidence(caseId: string) {
 		},
 		onSuccess: () => {
 			toast.success("Evidence verified", {
-				description: "The message is stored privately and ready to analyze.",
+				description: "The upload is stored privately and ready to analyze.",
 			});
 		},
 		/*
 		 * Refresh on failure too: `createUpload` may have registered the record
 		 * before the storage write failed, and the operator needs to see that
-		 * failed row rather than an empty list.
+		 * failed row rather than an empty list. Every upload also produces an
+		 * ingestion batch — one message for a single `.eml`, many for a
+		 * container — so that list is stale as well.
 		 */
 		onSettled: async () => {
-			await queryClient.invalidateQueries({ queryKey: orpc.evidence.key() });
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: orpc.evidence.key() }),
+				queryClient.invalidateQueries({ queryKey: orpc.batch.key() }),
+			]);
 		},
 	});
 }

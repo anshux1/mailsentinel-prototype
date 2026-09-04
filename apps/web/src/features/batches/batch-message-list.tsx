@@ -8,44 +8,44 @@ import {
 	ErrorState,
 	ListSkeleton,
 } from "@/components/common/states";
+import { useBatchEvidence } from "@/features/batches/queries";
 import { EvidenceRow } from "@/features/evidence/evidence-row";
-import { useEvidenceList } from "@/features/evidence/queries";
-import { UploadEvidenceDialog } from "@/features/evidence/upload-evidence-dialog";
 import { usePermissions } from "@/features/organization/use-permissions";
 
-export function EvidenceList({
+export function BatchMessageList({
+	batchId,
 	caseId,
 	onAnalyze,
 	analyzingEvidenceId,
 }: {
-	caseId: string;
+	batchId: string;
+	caseId?: string;
 	onAnalyze?: (evidenceId: string) => void;
 	analyzingEvidenceId?: string | null;
 }) {
 	const { can } = usePermissions();
-	const evidence = useEvidenceList(caseId);
+	const messages = useBatchEvidence(batchId, { caseId });
 
-	if (evidence.isPending) return <ListSkeleton rows={3} />;
+	if (messages.isPending) return <ListSkeleton rows={4} />;
 
-	if (evidence.isError) {
+	if (messages.isError) {
 		return (
 			<ErrorState
-				error={evidence.error}
-				onRetry={() => void evidence.refetch()}
-				title="Could not load evidence"
+				error={messages.error}
+				onRetry={() => void messages.refetch()}
+				title="Could not load the messages in this batch"
 			/>
 		);
 	}
 
-	const items = evidence.data?.items ?? [];
+	const items = messages.data?.items ?? [];
 
 	if (items.length === 0) {
 		return (
 			<EmptyState
 				icon={Mail}
-				title="No evidence yet"
-				description="Upload a raw .eml message or an .mbox container. Everything is hashed in your browser before anything is sent."
-				action={<UploadEvidenceDialog caseId={caseId} />}
+				title="No messages in this batch"
+				description="Segmentation may still be running, or every child failed to store."
 			/>
 		);
 	}

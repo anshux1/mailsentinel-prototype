@@ -1,7 +1,15 @@
 "use client";
 
-import { CheckCircle2, FileUp, Loader2, Upload, X } from "lucide-react";
+import {
+	Archive,
+	CheckCircle2,
+	FileUp,
+	Loader2,
+	Upload,
+	X,
+} from "lucide-react";
 import { motion } from "motion/react";
+import { useRouter } from "next/navigation";
 import { useCallback, useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -18,6 +26,7 @@ import { Progress } from "@/components/ui/progress";
 import {
 	EVIDENCE_ACCEPT,
 	EVIDENCE_FILE_ERRORS,
+	evidenceKind,
 	prepareEvidenceFile,
 	validateEvidenceFile,
 } from "@/features/evidence/file";
@@ -41,6 +50,7 @@ export function UploadEvidenceDialog({
 }) {
 	const inputId = useId();
 	const inputRef = useRef<HTMLInputElement>(null);
+	const router = useRouter();
 	const { can } = usePermissions();
 
 	const [open, setOpen] = useState(false);
@@ -89,6 +99,8 @@ export function UploadEvidenceDialog({
 		event.preventDefault();
 		if (!file || stage === "hashing" || stage === "uploading") return;
 
+		const kind = evidenceKind(file);
+
 		try {
 			setStage("hashing");
 			// The digest is computed locally so the server can reject any body that
@@ -106,7 +118,19 @@ export function UploadEvidenceDialog({
 
 			setStage("done");
 			onUploaded?.(evidence.id);
-			window.setTimeout(() => handleOpenChange(false), 700);
+
+			/*
+			 * A container is split server-side into one artifact per message, so
+			 * the useful destination is the batch rather than the case list the
+			 * operator is already looking at.
+			 */
+			const batchId = evidence.batchId;
+			const landsOnBatch = kind === "container" && Boolean(batchId);
+
+			window.setTimeout(() => {
+				handleOpenChange(false);
+				if (landsOnBatch) router.push(`/cases/${caseId}/batches/${batchId}`);
+			}, 700);
 		} catch {
 			// The error surfaces through `upload.error` below.
 			setStage("idle");
@@ -115,6 +139,8 @@ export function UploadEvidenceDialog({
 
 	if (!can("evidence:upload")) return null;
 
+	const selectedKind = file ? evidenceKind(file) : "single";
+	const isContainer = selectedKind === "container";
 	const busy = stage === "hashing" || stage === "uploading";
 	const progress =
 		stage === "hashing"
@@ -142,9 +168,11 @@ export function UploadEvidenceDialog({
 				<DialogHeader>
 					<DialogTitle>Upload evidence</DialogTitle>
 					<DialogDescription>
-						Raw <code className="font-mono text-[13px]">.eml</code> only. The
-						message is hashed in your browser, written to private storage, and
-						sealed as immutable — it is never rendered here.
+						A raw <code className="font-mono text-[13px]">.eml</code> message or
+						an <code className="font-mono text-[13px]">.mbox</code> container.
+						Everything is hashed in your browser, written to private storage,
+						and sealed as immutable — it is never rendered here. A container is
+						split server-side into one artifact per message.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -190,7 +218,11 @@ export function UploadEvidenceDialog({
 								className="flex items-center gap-3 text-left"
 							>
 								<span className="grid size-10 shrink-0 place-items-center rounded-md border border-hairline bg-surface-card">
-									<FileUp className="size-4 text-body" />
+									{isContainer ? (
+										<Archive className="size-4 text-body" />
+									) : (
+										<FileUp className="size-4 text-body" />
+									)}
 								</span>
 								<span className="min-w-0 flex-1">
 									<span className="block truncate text-[14px] text-ink">
@@ -225,8 +257,8 @@ export function UploadEvidenceDialog({
 							>
 								<Upload className="mx-auto size-5 text-ash" />
 								<p className="mt-3 text-[14px] text-body">
-									Drop an <span className="font-mono text-[13px]">.eml</span>{" "}
-									file here
+									Drop an <span className="font-mono text-[13px]">.eml</span> or{" "}
+									<span className="font-mono text-[13px]">.mbox</span> file here
 								</p>
 								<Button
 									type="button"
@@ -248,7 +280,9 @@ export function UploadEvidenceDialog({
 								{stage === "hashing"
 									? "Computing SHA-256 digest…"
 									: stage === "uploading"
-										? "Registering and writing to private storage…"
+										? isContainer
+											? "Storing and segmenting the container…"
+											: "Registering and writing to private storage…"
 										: "Verified and immutable."}
 							</p>
 						</div>
