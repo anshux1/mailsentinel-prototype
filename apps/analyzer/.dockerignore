@@ -1,10 +1,17 @@
-.env
-.env.*
-.venv
-__pycache__
-*.py[cod]
-.mypy_cache
-.ruff_cache
-.pytest_cache
+# Same no-implicit-recursion rule as the root file: bare names match only the
+# context root, so nested caches need the ** form to stay out of the image.
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.turbo
+
+# pydantic-settings reads a .env from the working directory, so never ship one.
+**/.env
+**/.env.*
+!**/.env.example
+
 .git
 tests

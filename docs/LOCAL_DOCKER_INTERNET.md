@@ -14,7 +14,7 @@ MailSentinel runs four application services and four support/backing services in
 | `analyzer` | Built from `apps/analyzer/Dockerfile` (Python 3.12) | MIME parsing, segmentation, IOC enrichment | `analyzer:8000` | Docker internal only | **No** (private boundary) |
 | `worker` | Same analyzer image (Python 3.12) | Dramatiq queue consumer for async analysis | No listener | None | **No** |
 | `migrate` | Monorepo image target `migrator` | One-shot Drizzle schema migration container | Exits 0 | None | **No** |
-| `seed` | Monorepo image target `migrator` (profile `seed`) | One-shot demo user/org seed container | Exits 0 | None | **No** |
+| `seed` | Monorepo image target `migrator` | One-shot demo user/org seed container (runs automatically before `web`) | Exits 0 | None | **No** |
 | `postgres` | `postgres:17-alpine` | Relational store for users, cases, runs, and reports | `postgres:5432` | `127.0.0.1:5432` | **No** |
 | `redis` | `redis:7-alpine` | Dramatiq message broker and enrichment cache | `redis:6379` | `127.0.0.1:6379` | **No** |
 | `minio` | `minio/minio:RELEASE.2025-07-18T21-56-31Z` | S3-compatible raw evidence storage | `minio:9000` | `127.0.0.1:9000` (API), `:9001` (Console) | **No** |
@@ -216,8 +216,8 @@ The Compose stack uses explicit Docker health checks and dependencies to manage 
 2. **Bucket Initialization**: `minio-init` waits for `minio` to become healthy (`mc ready local`), creates the `mailsentinel-evidence` bucket, applies private access policies, and exits `0`.
 3. **Database Migration**: `migrate` waits for `postgres` to become healthy (`pg_isready`), executes `pnpm db:migrate` using Drizzle Kit against the container database, and exits `0`.
 4. **Analyzer & Worker Startup**: `analyzer` and `worker` start once PostgreSQL, Redis, MinIO, bucket initialization, and database migrations have succeeded.
-5. **Web Service Startup**: `web` starts once `postgres`, `migrate`, and `analyzer` are healthy. It validates its health check at `http://127.0.0.1:3000/api/rpc/system/health`.
-6. **Optional Seeding**: `seed` runs `pnpm db:seed` on demand or via helper scripts.
+5. **Demo Seeding**: `seed` waits for `migrate`, runs `pnpm db:seed`, and exits `0`. It is idempotent, so it runs safely on every start and re-start.
+6. **Web Service Startup**: `web` starts once `postgres`, `migrate`, `seed`, and `analyzer` have succeeded. It validates its health check at `http://127.0.0.1:3000/api/rpc/system/health`.
 7. **Optional Tunnel**: `cloudflare-tunnel` runs when the `tunnel` profile is activated.
 
 ---
@@ -246,7 +246,8 @@ pnpm infra:reset
 # Build and start the entire stack in the background
 docker compose -f infra/compose.yaml up -d --build
 
-# Run one-shot database seeding (creates demo@mailsentinel.local)
+# Seeding already ran as a dependency of `web`. Re-run it explicitly only if
+# you reset the database by hand (it is idempotent):
 docker compose -f infra/compose.yaml run --rm seed
 
 # View real-time container status

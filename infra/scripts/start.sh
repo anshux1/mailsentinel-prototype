@@ -2,10 +2,8 @@
 set -eu
 . "$(dirname "$0")/common.sh"
 
-# Starts postgres, redis, minio, minio-init, migrate, analyzer, worker, and web
+# Starts postgres, redis, minio, migrations, seed, analyzer, worker, and web.
 $COMPOSE up -d --build --wait postgres redis minio analyzer worker web
-
-$COMPOSE run --rm seed
 
 printf '%s\n' 'MailSentinel stack is healthy and seeded.'
 printf '%s\n' 'Web application: http://localhost:3000'

@@ -1,0 +1,5 @@
+# Convenience entry point for the complete local stack.
+# Service definitions live under infra/ so `docker compose up --build` works
+# from the repository root without duplicating configuration.
+include:
+  - infra/compose.yaml

@@ -57,13 +57,12 @@ Using the repository helper script:
 pnpm infra:start
 ```
 
-Or using Docker Compose directly:
+Or, from the repository root, using Docker Compose directly:
 ```bash
-docker compose -f infra/compose.yaml up -d --build
-docker compose -f infra/compose.yaml run --rm seed
+docker compose up -d --build --wait
 ```
 
-Compose automatically initializes the MinIO evidence bucket, runs PostgreSQL migrations, boots the analyzer and worker, and launches the Next.js web application.
+Compose automatically initializes the MinIO evidence bucket, runs PostgreSQL migrations, seeds the demo account, boots the analyzer and worker, and launches the Next.js web application. No API keys are required with the default offline fixture configuration.
 
 ### 2. Access the Application
 
@@ -107,11 +106,12 @@ You can securely expose your local MailSentinel instance to the internet using *
   docker compose -f infra/compose.yaml run --rm cloudflare-tunnel tunnel --url http://web:3000
   ```
 - **Stable Named Tunnel (with custom domain & Google OAuth):**
-  Add your `CLOUDFLARE_TUNNEL_TOKEN` to `.env` and start with the tunnel profile:
+  Add your `CLOUDFLARE_TUNNEL_TOKEN` to a repository-root `.env`, then start with the tunnel profile:
   ```bash
-  docker compose -f infra/compose.yaml --profile cloudflare-tunnel up -d
-  # (or shorthand: docker compose -f infra/compose.yaml --profile tunnel up -d)
+  docker compose --profile cloudflare-tunnel up -d
+  # (or shorthand: docker compose --profile tunnel up -d)
   ```
+  Run this from the repository root so the root `compose.yaml` is used and the root `.env` is loaded. Passing `-f infra/compose.yaml` instead makes `infra/` the project directory, so put the file at `infra/.env` in that case. The `pnpm infra:*` helpers always load a root `.env` when one exists.
 
 For a comprehensive guide covering secret generation, environment configuration, Google/Gmail OAuth redirect URLs, and security checklists, see:
 👉 **[`docs/LOCAL_DOCKER_INTERNET.md`](docs/LOCAL_DOCKER_INTERNET.md)**

@@ -193,6 +193,8 @@ services:
         condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
       analyzer:
         condition: service_healthy
     healthcheck:
@@ -218,8 +220,6 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: "no"
-    profiles:
-      - seed
 
   cloudflare-tunnel:
     image: cloudflare/cloudflared:2025.2.1
